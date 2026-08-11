@@ -15,6 +15,8 @@ import type { ScoreSelection } from '../score/ScoreCanvas';
 export interface AppSettings {
   baseUrl: string;
   apiKey: string;
+  museScorePath: string;
+  autoPageTurn: boolean;
 }
 
 interface WorkspaceState {
@@ -24,6 +26,7 @@ interface WorkspaceState {
   selectedGroupId?: string;
   settings: AppSettings;
   assetUrls: Record<string, string>;
+  history: WorkspaceHistory;
   setParts(parts: ScorePart[]): void;
   setSelection(selection?: ScoreSelection): void;
   addGroup(): ShotGroup | undefined;
@@ -38,6 +41,49 @@ interface WorkspaceState {
   setSettings(settings: AppSettings): void;
   setAssetUrl(assetId: string, url: string): void;
   replaceProject(project: Project): void;
+  undo(): void;
+  redo(): void;
+}
+
+interface WorkspaceSnapshot {
+  project: Project;
+  parts: ScorePart[];
+  selection?: ScoreSelection;
+  selectedGroupId?: string;
+}
+
+interface WorkspaceHistory {
+  past: WorkspaceSnapshot[];
+  future: WorkspaceSnapshot[];
+}
+
+const HISTORY_LIMIT = 100;
+
+function snapshot(state: WorkspaceState): WorkspaceSnapshot {
+  return {
+    project: state.project,
+    parts: state.parts,
+    selection: state.selection,
+    selectedGroupId: state.selectedGroupId
+  };
+}
+
+function recordChange(state: WorkspaceState, change: Partial<WorkspaceState>): Partial<WorkspaceState> {
+  return {
+    ...change,
+    history: {
+      past: [...state.history.past, snapshot(state)].slice(-HISTORY_LIMIT),
+      future: []
+    }
+  };
+}
+
+/** Storyboard order is chronological while equal starts retain their existing slot order. */
+export function sortShotGroupsForStoryboard(groups: ShotGroup[]): ShotGroup[] {
+  return groups
+    .map((group, index) => ({ group, index }))
+    .sort((a, b) => a.group.range.startMeasure - b.group.range.startMeasure || a.index - b.index)
+    .map(({ group }) => group);
 }
 
 const now = new Date().toISOString();
@@ -53,9 +99,9 @@ const initialProject: Project = {
 function loadSettings(): AppSettings {
   try {
     const value = localStorage.getItem('waterclip.settings');
-    if (value) return { baseUrl: 'https://api.openai.com/v1', apiKey: '', ...JSON.parse(value) };
+    if (value) return { baseUrl: 'https://api.openai.com/v1', apiKey: '', museScorePath: '', autoPageTurn: false, ...JSON.parse(value) };
   } catch { /* corrupted settings fall back safely */ }
-  return { baseUrl: 'https://api.openai.com/v1', apiKey: '' };
+  return { baseUrl: 'https://api.openai.com/v1', apiKey: '', museScorePath: '', autoPageTurn: false };
 }
 
 export const useWorkspace = create<WorkspaceState>((set, get) => ({
@@ -63,6 +109,7 @@ export const useWorkspace = create<WorkspaceState>((set, get) => ({
   parts: [],
   settings: loadSettings(),
   assetUrls: {},
+  history: { past: [], future: [] },
   setParts: (parts) => set({ parts }),
   setSelection: (selection) => set({ selection }),
   addGroup: () => {
@@ -75,14 +122,14 @@ export const useWorkspace = create<WorkspaceState>((set, get) => ({
       endMeasure: selection.endMeasure,
       occurrence: 1
     });
-    set((state) => ({
+    set((state) => recordChange(state, {
       project: { ...state.project, updatedAt: new Date().toISOString(), shotGroups: [...state.project.shotGroups, group] },
       selectedGroupId: group.id
     }));
     return group;
   },
   selectGroup: (selectedGroupId) => set({ selectedGroupId }),
-  updateShot: (groupId, shotId, patch) => set((state) => ({
+  updateShot: (groupId, shotId, patch) => set((state) => recordChange(state, {
     project: {
       ...state.project,
       updatedAt: new Date().toISOString(),
@@ -91,10 +138,10 @@ export const useWorkspace = create<WorkspaceState>((set, get) => ({
         : group)
     }
   })),
-  updateLayout: (groupId, layout) => set((state) => ({
+  updateLayout: (groupId, layout) => set((state) => recordChange(state, {
     project: { ...state.project, updatedAt: new Date().toISOString(), shotGroups: state.project.shotGroups.map((g) => g.id === groupId ? { ...g, layout } : g) }
   })),
-  updateRangeOccurrence: (groupId, occurrence) => set((state) => ({
+  updateRangeOccurrence: (groupId, occurrence) => set((state) => recordChange(state, {
     project: {
       ...state.project,
       updatedAt: new Date().toISOString(),
@@ -103,13 +150,13 @@ export const useWorkspace = create<WorkspaceState>((set, get) => ({
         : group)
     }
   })),
-  swapGroupSlots: (groupId, from, to) => set((state) => ({
+  swapGroupSlots: (groupId, from, to) => set((state) => recordChange(state, {
     project: { ...state.project, updatedAt: new Date().toISOString(), shotGroups: state.project.shotGroups.map((g) => g.id === groupId ? swapSlots(g, from, to) : g) }
   })),
-  duplicateGroupShot: (groupId, shotId) => set((state) => ({
+  duplicateGroupShot: (groupId, shotId) => set((state) => recordChange(state, {
     project: { ...state.project, updatedAt: new Date().toISOString(), shotGroups: state.project.shotGroups.map((g) => g.id === groupId ? duplicateShot(g, shotId) : g) }
   })),
-  deleteGroup: (groupId) => set((state) => ({
+  deleteGroup: (groupId) => set((state) => recordChange(state, {
     project: { ...state.project, updatedAt: new Date().toISOString(), shotGroups: state.project.shotGroups.filter((g) => g.id !== groupId) },
     selectedGroupId: state.selectedGroupId === groupId ? undefined : state.selectedGroupId
   })),
@@ -131,7 +178,8 @@ export const useWorkspace = create<WorkspaceState>((set, get) => ({
           normalizedMusicXmlAssetId: `score-musicxml-${state.project.id}`,
           parts
         }
-      }
+      },
+      history: { past: [], future: [] }
     };
   }),
   setSettings: (settings) => {
@@ -139,7 +187,29 @@ export const useWorkspace = create<WorkspaceState>((set, get) => ({
     set({ settings });
   },
   setAssetUrl: (assetId, url) => set((state) => ({ assetUrls: { ...state.assetUrls, [assetId]: url } })),
-  replaceProject: (project) => set({ project, parts: project.score?.parts ?? [], selectedGroupId: undefined, selection: undefined, assetUrls: {} })
+  replaceProject: (project) => set({ project, parts: project.score?.parts ?? [], selectedGroupId: undefined, selection: undefined, assetUrls: {}, history: { past: [], future: [] } }),
+  undo: () => set((state) => {
+    const previous = state.history.past.at(-1);
+    if (!previous) return state;
+    return {
+      ...previous,
+      history: {
+        past: state.history.past.slice(0, -1),
+        future: [snapshot(state), ...state.history.future]
+      }
+    };
+  }),
+  redo: () => set((state) => {
+    const next = state.history.future[0];
+    if (!next) return state;
+    return {
+      ...next,
+      history: {
+        past: [...state.history.past, snapshot(state)].slice(-HISTORY_LIMIT),
+        future: state.history.future.slice(1)
+      }
+    };
+  })
 }));
 
 export { availableLayouts };

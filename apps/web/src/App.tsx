@@ -7,12 +7,21 @@ import {
 import type { Shot, ShotGroup, ShotSize, SplitLayout } from './domain';
 import { buildImagePrompt, occurrenceLabel, SHOT_SIZES } from './domain';
 import { ScoreCanvas, type PlaybackPosition, type ScoreCanvasHandle } from './score/ScoreCanvas';
-import { availableLayouts, useWorkspace } from './store/workspace';
+import type { ScoreSectionMarker } from './score/navigation';
+import { TrackLevelBus, isTrackAudible } from './score/trackLevels';
+import { TrackLevelMeter } from './score/TrackLevelMeter';
+import { availableLayouts, sortShotGroupsForStoryboard, useWorkspace, type AppSettings } from './store/workspace';
 import { SplitPreview } from './components/SplitPreview';
 import { createProjectAutosave, exportProjectPackage, importProjectPackage, ProjectRepository } from './data';
 import type { BinaryAsset } from './domain';
+import { resolveWorkspaceShortcut } from './keyboard';
 
 type Health = { museScore?: { available: boolean; version: string | null } };
+
+function museScoreApiUrl(pathname: string, museScorePath: string): string {
+  const path = museScorePath.trim();
+  return path ? `${pathname}?${new URLSearchParams({ museScorePath: path })}` : pathname;
+}
 
 function formatTime(milliseconds: number) {
   const total = Math.max(0, Math.floor(milliseconds / 1000));
@@ -57,6 +66,7 @@ export function App() {
   const projectInputRef = useRef<HTMLInputElement>(null);
   const repositoryRef = useRef(new ProjectRepository());
   const autosaveRef = useRef(createProjectAutosave(repositoryRef.current));
+  const [levelBus] = useState(() => new TrackLevelBus());
   const project = useWorkspace((s) => s.project);
   const parts = useWorkspace((s) => s.parts);
   const selection = useWorkspace((s) => s.selection);
@@ -77,12 +87,15 @@ export function App() {
   const setSettings = useWorkspace((s) => s.setSettings);
   const setAssetUrl = useWorkspace((s) => s.setAssetUrl);
   const replaceProject = useWorkspace((s) => s.replaceProject);
+  const undo = useWorkspace((s) => s.undo);
+  const redo = useWorkspace((s) => s.redo);
 
   const [scoreData, setScoreData] = useState<Uint8Array>();
   const [scoreFilename, setScoreFilename] = useState('');
   const [sourceFormat, setSourceFormat] = useState<'musicxml' | 'mscz'>('musicxml');
   const [playing, setPlaying] = useState(false);
   const [position, setPosition] = useState<PlaybackPosition>({ currentTime: 0, endTime: 0, currentTick: 0, endTick: 0, measure: 1, occurrence: 1 });
+  const [sections, setSections] = useState<ScoreSectionMarker[]>([]);
   const [muted, setMuted] = useState<Set<number>>(new Set());
   const [soloed, setSoloed] = useState<Set<number>>(new Set());
   const [zoom, setZoom] = useState(0.82);
@@ -95,14 +108,15 @@ export function App() {
   const togglePanel = (panel: keyof typeof collapsedPanels) => setCollapsedPanels((value) => ({ ...value, [panel]: !value[panel] }));
 
   const selectedGroup = project.shotGroups.find((group) => group.id === selectedGroupId);
+  const storyboardGroups = useMemo(() => sortShotGroupsForStoryboard(project.shotGroups), [project.shotGroups]);
   const activeGroups = useMemo(() => project.shotGroups.filter((group) =>
     position.measure >= group.range.startMeasure && position.measure <= group.range.endMeasure &&
     (group.range.occurrence === 'all' || group.range.occurrence === position.occurrence)
   ), [position.measure, position.occurrence, project.shotGroups]);
 
   useEffect(() => {
-    fetch('/api/health').then((r) => r.json()).then(setHealth).catch(() => setHealth(undefined));
-  }, []);
+    fetch(museScoreApiUrl('/api/health', settingsValue.museScorePath)).then((r) => r.json()).then(setHealth).catch(() => setHealth(undefined));
+  }, [settingsValue.museScorePath]);
 
   useEffect(() => {
     let cancelled = false;
@@ -130,6 +144,7 @@ export function App() {
   }, [project]);
 
   useEffect(() => () => { void autosaveRef.current.dispose(); }, []);
+  useEffect(() => () => levelBus.destroy(), [levelBus]);
 
   const persistAssetUrl = useCallback(async (assetId: string, dataUrl: string, kind: BinaryAsset['kind'], filename: string) => {
     setAssetUrl(assetId, dataUrl);
@@ -139,14 +154,24 @@ export function App() {
 
   useEffect(() => {
     const handler = (event: KeyboardEvent) => {
-      if (event.key !== 'Enter' || event.isComposing) return;
-      const target = event.target as HTMLElement;
-      if (target.matches('input, textarea, select, button')) return;
-      if (addGroup()) setNotice('已添加分镜组；框选保持，可继续按 Enter 添加补拍');
+      const command = resolveWorkspaceShortcut(event);
+      if (command === 'undo' || command === 'redo') {
+        event.preventDefault();
+        command === 'redo' ? redo() : undo();
+        setNotice(command === 'redo' ? '已重做上一步' : '已撤销上一步');
+        return;
+      }
+      if (command === 'delete' && selectedGroupId) {
+        event.preventDefault();
+        deleteGroup(selectedGroupId);
+        setNotice('已删除当前分镜组，可按 Ctrl+Z 恢复');
+        return;
+      }
+      if (command === 'add-group' && addGroup()) setNotice('已添加分镜组；框选保持，可继续按 Enter 添加补拍');
     };
     window.addEventListener('keydown', handler);
     return () => window.removeEventListener('keydown', handler);
-  }, [addGroup]);
+  }, [addGroup, deleteGroup, redo, selectedGroupId, undo]);
 
   useEffect(() => {
     const handler = async (event: ClipboardEvent) => {
@@ -172,7 +197,7 @@ export function App() {
       if (isMscz) {
         const form = new FormData();
         form.set('score', file);
-        const response = await fetch('/api/scores/convert', { method: 'POST', body: form });
+        const response = await fetch(museScoreApiUrl('/api/scores/convert', settingsValue.museScorePath), { method: 'POST', body: form });
         if (!response.ok) throw new Error((await response.json()).error || 'MSCZ 转换失败');
         bytes = new Uint8Array(await response.arrayBuffer());
       } else {
@@ -310,15 +335,18 @@ export function App() {
 
         <section className="score-column panel">
           <div className="score-toolbar">
-            <button className="transport" disabled={!scoreData} onClick={() => scoreRef.current?.playPause()}>{playing ? <Pause size={17} /> : <Play size={17} fill="currentColor" />}</button>
+            <button className="transport" aria-label={playing ? '暂停' : '播放'} title={playing ? '暂停' : '播放（音源未就绪时会自动排队）'} disabled={!scoreData} onClick={() => scoreRef.current?.playPause()}>{playing ? <Pause size={17} /> : <Play size={17} fill="currentColor" />}</button>
             <span className="timecode">{formatTime(position.currentTime)}</span>
-            <input aria-label="播放位置" className="scrubber" type="range" min="0" max="1000" value={position.endTick ? Math.round(position.currentTick / position.endTick * 1000) : 0} onChange={(e) => scoreRef.current?.seekRatio(Number(e.target.value) / 1000)} />
+            <div className="scrubber-track">
+              <input aria-label="播放位置" className="scrubber" type="range" min="0" max="1000" value={position.endTick ? Math.round(position.currentTick / position.endTick * 1000) : 0} onChange={(e) => scoreRef.current?.seekRatio(Number(e.target.value) / 1000)} />
+              <div className="section-markers" aria-label="乐段导航">{sections.map((section) => <button key={section.label} style={{ left: `${section.ratio * 100}%` }} title={`跳至 ${section.label} 段 · 第 ${section.measure} 小节`} onClick={() => scoreRef.current?.seekMeasure(section.measure)}>{section.label}</button>)}</div>
+            </div>
             <span className="timecode muted-text">{formatTime(position.endTime)}</span>
             <div className="measure-readout">M.{position.measure}<small>第 {position.occurrence} 遍</small></div>
             <label className="zoom-control"><Maximize2 size={14} /><input type="range" min="0.55" max="1.25" step="0.05" value={zoom} onChange={(e) => { const value = Number(e.target.value); setZoom(value); scoreRef.current?.setZoom(value); }} /></label>
           </div>
           <div className="score-frame">
-            {scoreData ? <ScoreCanvas ref={scoreRef} data={scoreData} onParts={onParts} onSelection={setSelection} onPosition={onPosition} onPlayingChange={onPlayingChange} onError={onScoreError} /> : <div className="score-empty"><div className="empty-score-sheet"><FileMusic size={44} /><h1>把乐谱放上导演谱台</h1><p>支持 MSCZ、MusicXML、XML 与 MXL。导入后即可试听、框选和编排分镜。</p><button className="button primary" onClick={() => scoreInputRef.current?.click()}>选择乐谱</button></div></div>}
+            {scoreData ? <ScoreCanvas ref={scoreRef} data={scoreData} selection={selection} autoPageTurn={settingsValue.autoPageTurn} mutedTracks={muted} soloTracks={soloed} onToggleTrack={toggleTrack} levelBus={levelBus} onParts={onParts} onSelection={setSelection} onPosition={onPosition} onPlayingChange={onPlayingChange} onSections={setSections} onError={onScoreError} /> : <div className="score-empty"><div className="empty-score-sheet"><FileMusic size={44} /><h1>把乐谱放上导演谱台</h1><p>支持 MSCZ、MusicXML、XML 与 MXL。导入后即可试听、框选和编排分镜。</p><button className="button primary" onClick={() => scoreInputRef.current?.click()}>选择乐谱</button></div></div>}
           </div>
         </section>
 
@@ -326,7 +354,7 @@ export function App() {
           <div className="panel-heading"><div><span className="eyebrow">PART MIXER</span><h2>声部监听</h2></div><div className="panel-tools"><SlidersHorizontal size={17} /><button className="panel-toggle" title={collapsedPanels.mixer ? '展开声部监听' : '收起声部监听'} onClick={() => togglePanel('mixer')}>{collapsedPanels.mixer ? <ChevronLeft size={16} /> : <ChevronRight size={16} />}</button></div></div>
           {!collapsedPanels.mixer && <>
           <div className="mixer-list">
-            {parts.length ? parts.map((part, index) => <div className="track-row" key={part.id}><span className="track-number">{String(index + 1).padStart(2, '0')}</span><div className="track-name"><strong>{part.name}</strong><small>{part.staffIds.length} 谱表</small></div><button className={muted.has(index) ? 'track-toggle active mute' : 'track-toggle'} onClick={() => toggleTrack(index, 'mute')} title="静音">M</button><button className={soloed.has(index) ? 'track-toggle active solo' : 'track-toggle'} onClick={() => toggleTrack(index, 'solo')} title="独奏">S</button></div>) : <div className="mixer-empty"><Volume2 size={24} /><p>导入乐谱后显示声部</p></div>}
+            {parts.length ? parts.map((part, index) => <div className="track-row" key={part.id}><span className="track-number">{String(index + 1).padStart(2, '0')}</span><div className="track-name"><strong>{part.name}</strong><small>{part.staffIds.length} 谱表</small></div><TrackLevelMeter bus={levelBus} track={index} audible={isTrackAudible(index, muted, soloed)} /><button className={muted.has(index) ? 'track-toggle active mute' : 'track-toggle'} onClick={() => toggleTrack(index, 'mute')} title="静音">M</button><button className={soloed.has(index) ? 'track-toggle active solo' : 'track-toggle'} onClick={() => toggleTrack(index, 'solo')} title="独奏">S</button></div>) : <div className="mixer-empty"><Volume2 size={24} /><p>导入乐谱后显示声部</p></div>}
           </div>
           <div className="engine-status"><span className={health?.museScore?.available ? 'online' : ''} />MuseScore {health?.museScore?.available ? health.museScore.version : '未连接'}</div>
           </>}
@@ -336,7 +364,7 @@ export function App() {
           <div className="storyboard-header"><div><span className="eyebrow">STORYBOARD TIMELINE</span><h2>故事板</h2></div><div className="panel-tools"><div className="legend"><span><i className="active-key" />播放命中</span><span>{project.shotGroups.length} 组 / {project.shotGroups.reduce((n, g) => n + g.shots.length, 0)} 镜</span></div><button className="panel-toggle" title={collapsedPanels.storyboard ? '展开故事板' : '收起故事板'} onClick={() => togglePanel('storyboard')}>{collapsedPanels.storyboard ? <ChevronUp size={16} /> : <ChevronDown size={16} />}</button></div></div>
           {!collapsedPanels.storyboard &&
           <div className="story-track">
-            {project.shotGroups.length ? project.shotGroups.map((group, index) => <button key={group.id} className={`story-card ${activeGroups.some((g) => g.id === group.id) ? 'is-active' : ''} ${group.id === selectedGroupId ? 'is-selected' : ''}`} onClick={() => selectGroup(group.id)}><div className="story-picture"><SplitPreview group={group} assetUrls={assetUrls} compact /><span className="story-index">{String(index + 1).padStart(2, '0')}</span></div><div className="story-meta"><strong>M.{group.range.startMeasure}{group.range.endMeasure !== group.range.startMeasure ? `–${group.range.endMeasure}` : ''}</strong><span>{layoutLabel(group.layout)}</span><small>{group.shots.map((shot) => shot.partName).join(' · ')}</small></div></button>) : <div className="story-empty"><span className="cue-line" /><p>分镜会按乐谱时间排列在这里</p></div>}
+            {storyboardGroups.length ? storyboardGroups.map((group, index) => <button key={group.id} className={`story-card ${activeGroups.some((g) => g.id === group.id) ? 'is-active' : ''} ${group.id === selectedGroupId ? 'is-selected' : ''}`} onClick={() => selectGroup(group.id)}><div className="story-picture"><SplitPreview group={group} assetUrls={assetUrls} compact /><span className="story-index">{String(index + 1).padStart(2, '0')}</span></div><div className="story-meta"><strong>M.{group.range.startMeasure}{group.range.endMeasure !== group.range.startMeasure ? `–${group.range.endMeasure}` : ''}</strong><span>{layoutLabel(group.layout)}</span><small>{group.shots.map((shot) => shot.partName).join(' · ')}</small></div></button>) : <div className="story-empty"><span className="cue-line" /><p>分镜会按乐谱时间排列在这里</p></div>}
           </div>}
         </section>
       </main>
@@ -368,6 +396,6 @@ function GroupEditor({ group, assetUrls, onUpdateShot, onOccurrence, onLayout, o
   </div>;
 }
 
-function SettingsDialog({ value, onChange, onClose, onSave }: { value: { baseUrl: string; apiKey: string }; onChange(value: { baseUrl: string; apiKey: string }): void; onClose(): void; onSave(): void }) {
-  return <div className="dialog-backdrop" onMouseDown={(e) => { if (e.target === e.currentTarget) onClose(); }}><section className="settings-dialog" role="dialog" aria-modal="true" aria-label="设置"><header><div><span className="eyebrow">LOCAL SETTINGS</span><h2>图像生成设置</h2></div><button className="icon-button" onClick={onClose}><X size={18} /></button></header><div className="settings-body"><label>Base URL<input value={value.baseUrl} onChange={(e) => onChange({ ...value, baseUrl: e.target.value })} placeholder="https://api.openai.com/v1" /></label><label>API Key<input type="password" value={value.apiKey} onChange={(e) => onChange({ ...value, apiKey: e.target.value })} placeholder="sk-…" /></label><div className="security-note"><VolumeX size={17} /><p><strong>密钥仅保存在这台电脑的浏览器中。</strong><br />它不会写入项目包或服务端日志；同机脚本仍可能读取本地存储。</p></div><div className="fixed-model"><span>模型</span><strong>gpt-image-2</strong><span>尺寸</span><strong>1280 × 720</strong><span>质量</span><strong>Medium</strong></div></div><footer><button className="button" onClick={onClose}>取消</button><button className="button primary" disabled={!value.baseUrl.trim() || !value.apiKey.trim()} onClick={onSave}>保存设置</button></footer></section></div>;
+function SettingsDialog({ value, onChange, onClose, onSave }: { value: AppSettings; onChange(value: AppSettings): void; onClose(): void; onSave(): void }) {
+  return <div className="dialog-backdrop" onMouseDown={(e) => { if (e.target === e.currentTarget) onClose(); }}><section className="settings-dialog" role="dialog" aria-modal="true" aria-label="设置"><header><div><span className="eyebrow">LOCAL SETTINGS</span><h2>本机工具与图像设置</h2></div><button className="icon-button" onClick={onClose}><X size={18} /></button></header><div className="settings-body"><label>MuseScore 可执行文件<input value={value.museScorePath} onChange={(e) => onChange({ ...value, museScorePath: e.target.value })} placeholder="C:\Program Files\MuseScore 4\bin\MuseScore4.exe" /><small>留空时由本地服务自动探测；路径只随本次同源请求发送。</small></label><label className="setting-toggle"><input type="checkbox" checked={value.autoPageTurn} onChange={(e) => onChange({ ...value, autoPageTurn: e.target.checked })} /><span><strong>播放时自动整页翻谱</strong><small>当前页播放完才向右移动，并保留上一页最后一小节作为衔接。</small></span></label><label>Base URL<input value={value.baseUrl} onChange={(e) => onChange({ ...value, baseUrl: e.target.value })} placeholder="https://api.openai.com/v1" /></label><label>API Key<input type="password" value={value.apiKey} onChange={(e) => onChange({ ...value, apiKey: e.target.value })} placeholder="sk-…" /></label><div className="security-note"><VolumeX size={17} /><p><strong>密钥和工具路径仅保存在这台电脑的浏览器中。</strong><br />它们不会写入项目包；API Key 不会进入服务端日志。</p></div><div className="fixed-model"><span>模型</span><strong>gpt-image-2</strong><span>尺寸</span><strong>1280 × 720</strong><span>质量</span><strong>Medium</strong></div></div><footer><button className="button" onClick={onClose}>取消</button><button className="button primary" disabled={!value.baseUrl.trim()} onClick={onSave}>保存设置</button></footer></section></div>;
 }

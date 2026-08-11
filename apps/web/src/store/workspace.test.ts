@@ -1,6 +1,6 @@
 import { beforeEach, describe, expect, it } from 'vitest';
 import type { Project, ScorePart } from '../domain';
-import { useWorkspace } from './workspace';
+import { sortShotGroupsForStoryboard, useWorkspace } from './workspace';
 
 const parts: ScorePart[] = [
   { id: 'violin', name: '小提琴', staffIds: ['violin-staff'], playbackTrackIds: [0] },
@@ -25,7 +25,8 @@ describe('workspace store', () => {
       parts,
       selection: undefined,
       selectedGroupId: undefined,
-      assetUrls: {}
+      assetUrls: {},
+      history: { past: [], future: [] }
     });
   });
 
@@ -63,5 +64,67 @@ describe('workspace store', () => {
     expect(useWorkspace.getState().selection).toBeUndefined();
     expect(useWorkspace.getState().selectedGroupId).toBeUndefined();
     expect(useWorkspace.getState().parts).toEqual(replacement);
+  });
+
+  it('故事板按起始小节排序，起点相同的分镜保持原有次序', () => {
+    useWorkspace.getState().setSelection({ partIds: ['violin'], startMeasure: 10, endMeasure: 11 });
+    const lateFirst = useWorkspace.getState().addGroup()!;
+    useWorkspace.getState().setSelection({ partIds: ['cello'], startMeasure: 2, endMeasure: 3 });
+    const early = useWorkspace.getState().addGroup()!;
+    useWorkspace.getState().setSelection({ partIds: ['cello'], startMeasure: 10, endMeasure: 10 });
+    const lateSecond = useWorkspace.getState().addGroup()!;
+
+    const source = useWorkspace.getState().project.shotGroups;
+    const sorted = sortShotGroupsForStoryboard(source);
+
+    expect(sorted.map((group) => group.id)).toEqual([early.id, lateFirst.id, lateSecond.id]);
+    expect(source.map((group) => group.id)).toEqual([lateFirst.id, early.id, lateSecond.id]);
+  });
+
+  it('撤销和重做恢复分镜组、选中状态及编辑内容', () => {
+    useWorkspace.getState().setSelection({ partIds: ['violin'], startMeasure: 4, endMeasure: 6 });
+    const group = useWorkspace.getState().addGroup()!;
+    const shot = group.shots[0];
+    useWorkspace.getState().updateShot(group.id, shot.id, { description: '手部特写' });
+    useWorkspace.getState().deleteGroup(group.id);
+
+    expect(useWorkspace.getState().project.shotGroups).toHaveLength(0);
+    useWorkspace.getState().undo();
+    expect(useWorkspace.getState().selectedGroupId).toBe(group.id);
+    expect(useWorkspace.getState().project.shotGroups[0].shots[0].description).toBe('手部特写');
+
+    useWorkspace.getState().undo();
+    expect(useWorkspace.getState().project.shotGroups[0].shots[0].description).toBe('');
+
+    useWorkspace.getState().redo();
+    expect(useWorkspace.getState().project.shotGroups[0].shots[0].description).toBe('手部特写');
+    useWorkspace.getState().redo();
+    expect(useWorkspace.getState().project.shotGroups).toHaveLength(0);
+  });
+
+  it('撤销后发生新编辑会清空重做分支', () => {
+    useWorkspace.getState().setSelection({ partIds: ['violin'], startMeasure: 1, endMeasure: 1 });
+    const group = useWorkspace.getState().addGroup()!;
+    useWorkspace.getState().updateShot(group.id, group.shots[0].id, { description: '第一次编辑' });
+    useWorkspace.getState().undo();
+    useWorkspace.getState().updateShot(group.id, group.shots[0].id, { description: '分支编辑' });
+    useWorkspace.getState().redo();
+
+    expect(useWorkspace.getState().project.shotGroups[0].shots[0].description).toBe('分支编辑');
+    expect(useWorkspace.getState().history.future).toEqual([]);
+  });
+
+  it('把 MuseScore 路径与其他本机设置一起持久化', () => {
+    useWorkspace.getState().setSettings({
+      baseUrl: 'https://api.example.test/v1',
+      apiKey: 'local-only',
+      museScorePath: 'C:\\Program Files\\MuseScore 4\\bin\\MuseScore4.exe',
+      autoPageTurn: true,
+    });
+
+    expect(JSON.parse(localStorage.getItem('waterclip.settings') ?? '{}')).toMatchObject({
+      museScorePath: 'C:\\Program Files\\MuseScore 4\\bin\\MuseScore4.exe',
+      autoPageTurn: true,
+    });
   });
 });
