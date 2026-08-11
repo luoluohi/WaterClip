@@ -11,7 +11,7 @@ const MAX_SCORE_BYTES = 50 * 1024 * 1024;
 const PASSTHROUGH_EXTENSIONS = new Set(['.musicxml', '.xml', '.mxl']);
 
 export interface AppDependencies {
-  detectMuseScore?: () => Promise<MuseScoreInfo | null>;
+  detectMuseScore?: (preferredPath?: string) => Promise<MuseScoreInfo | null>;
   convertMscz?: typeof convertMsczToMusicXml;
   fetchImpl?: typeof fetch;
   imageTimeoutMs?: number;
@@ -22,6 +22,14 @@ function clientError(message: string, statusCode = 400): Error & { statusCode: n
   return Object.assign(new Error(message), { statusCode });
 }
 
+function requestedMuseScorePath(query: unknown): string | undefined {
+  if (!query || typeof query !== 'object') return undefined;
+  const value = (query as { museScorePath?: unknown }).museScorePath;
+  if (value === undefined || value === '') return undefined;
+  if (typeof value !== 'string' || value.length > 2_048) throw clientError('MuseScore 路径无效');
+  return value;
+}
+
 export async function buildApp(deps: AppDependencies = {}): Promise<FastifyInstance> {
   const app = Fastify({ logger: false, bodyLimit: MAX_SCORE_BYTES + 1024 * 1024 });
   await app.register(cors, { origin: true });
@@ -29,8 +37,9 @@ export async function buildApp(deps: AppDependencies = {}): Promise<FastifyInsta
     limits: { files: 1, fileSize: MAX_SCORE_BYTES, fields: 4 },
   });
 
-  app.get('/api/health', async () => {
-    const museScore = await (deps.detectMuseScore ?? detectMuseScore)();
+  app.get<{ Querystring: { museScorePath?: string } }>('/api/health', async (request) => {
+    const preferredPath = requestedMuseScorePath(request.query);
+    const museScore = await (deps.detectMuseScore ?? detectMuseScore)(preferredPath);
     return {
       ok: true,
       museScore: museScore
@@ -39,7 +48,7 @@ export async function buildApp(deps: AppDependencies = {}): Promise<FastifyInsta
     };
   });
 
-  app.post('/api/scores/convert', async (request, reply) => {
+  app.post<{ Querystring: { museScorePath?: string } }>('/api/scores/convert', async (request, reply) => {
     let part;
     try {
       part = await request.file();
@@ -60,8 +69,13 @@ export async function buildApp(deps: AppDependencies = {}): Promise<FastifyInsta
     }
     if (extension !== '.mscz') throw clientError('仅支持 .mscz、.musicxml、.xml 或 .mxl 乐谱');
 
-    const museScore = await (deps.detectMuseScore ?? detectMuseScore)();
-    if (!museScore) throw clientError('未找到 MuseScore Studio 4，请设置 MUSESCORE_PATH', 503);
+    const preferredPath = requestedMuseScorePath(request.query);
+    const museScore = await (deps.detectMuseScore ?? detectMuseScore)(preferredPath);
+    if (!museScore) {
+      throw clientError(preferredPath
+        ? '设置中的 MuseScore 路径无效，或该程序不是 MuseScore Studio 4'
+        : '未找到 MuseScore Studio 4，请在设置面板中填写可执行文件路径', 503);
+    }
     try {
       const converted = await (deps.convertMscz ?? convertMsczToMusicXml)({
         bytes,
