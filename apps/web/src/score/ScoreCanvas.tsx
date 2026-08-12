@@ -1,7 +1,7 @@
 import { useEffect, useImperativeHandle, useRef, useState, forwardRef } from 'react';
 import * as alphaTab from '@coderline/alphatab';
 import type { ScorePart } from '../domain';
-import { autoScrollDelta, intersects, isMeaningfulDrag, normalizeDragRect, pointRelativeToHost, pointerGesture, type Point } from './interaction';
+import { autoScrollDelta, intersects, isMeaningfulDrag, normalizeDragRect, panScrollTarget, pointRelativeToHost, pointerGesture, wheelScrollDelta, type Point } from './interaction';
 import type { PlayedNoteEvent, TrackLevelBus } from './trackLevels';
 import { findFirstOverlappingMeasure, normalizeHorizontalBarWidths, type MeasureBounds } from './horizontalLayout';
 import { buildSectionMarkers, pageTurnTarget, playbackRequestAction, seekRevealTarget, type ScoreSectionMarker } from './navigation';
@@ -65,6 +65,7 @@ export const ScoreCanvas = forwardRef<ScoreCanvasHandle, ScoreCanvasProps>(funct
   const lastPointerClientRef = useRef<Point | null>(null);
   const autoScrollFrameRef = useRef<number | undefined>(undefined);
   const seekingRef = useRef(false);
+  const panStartRef = useRef<{ pointer: Point; scroll: Point } | null>(null);
   const selectionElRef = useRef<HTMLDivElement>(null);
   const measureTagsElRef = useRef<HTMLDivElement>(null);
   const currentPositionRef = useRef<PlaybackPosition | null>(null);
@@ -465,8 +466,22 @@ export const ScoreCanvas = forwardRef<ScoreCanvasHandle, ScoreCanvasProps>(funct
     stopAutoScroll();
     dragStartRef.current = null;
     seekingRef.current = false;
+    panStartRef.current = null;
     if (selectionElRef.current) selectionElRef.current.hidden = true;
   };
+
+  useEffect(() => {
+    const viewport = viewportRef.current;
+    if (!viewport) return;
+    const onWheel = (event: WheelEvent) => {
+      if (!event.shiftKey) return;
+      event.preventDefault();
+      const delta = wheelScrollDelta(event.deltaX, event.deltaY, true);
+      viewport.scrollBy({ left: delta.x, top: delta.y, behavior: 'auto' });
+    };
+    viewport.addEventListener('wheel', onWheel, { passive: false });
+    return () => viewport.removeEventListener('wheel', onWheel);
+  }, []);
 
   const seekAtPoint = (point: Point) => {
     const api = apiRef.current;
@@ -508,6 +523,14 @@ export const ScoreCanvas = forwardRef<ScoreCanvasHandle, ScoreCanvasProps>(funct
       <div
         className="score-surface"
         onPointerDown={(event) => {
+          if (event.button === 1) {
+            const viewport = viewportRef.current;
+            if (!viewport) return;
+            event.preventDefault();
+            panStartRef.current = { pointer: { x: event.clientX, y: event.clientY }, scroll: { x: viewport.scrollLeft, y: viewport.scrollTop } };
+            event.currentTarget.setPointerCapture(event.pointerId);
+            return;
+          }
           if (event.button !== 0) return;
           if ((event.target as Element).closest('button, input, select, textarea')) return;
           const point = pointFromEvent(event);
@@ -523,6 +546,11 @@ export const ScoreCanvas = forwardRef<ScoreCanvasHandle, ScoreCanvasProps>(funct
           event.currentTarget.setPointerCapture(event.pointerId);
         }}
         onPointerMove={(event) => {
+          if (panStartRef.current && viewportRef.current) {
+            const target = panScrollTarget(panStartRef.current.pointer, { x: event.clientX, y: event.clientY }, panStartRef.current.scroll);
+            viewportRef.current.scrollTo({ left: target.x, top: target.y, behavior: 'auto' });
+            return;
+          }
           if (seekingRef.current) {
             seekAtPoint(pointFromEvent(event));
             return;
@@ -534,6 +562,11 @@ export const ScoreCanvas = forwardRef<ScoreCanvasHandle, ScoreCanvasProps>(funct
           if (pointerGesture(dragStartRef.current, point) === 'drag') updateSelectionVisual(dragStartRef.current, point);
         }}
         onPointerUp={(event) => {
+          if (panStartRef.current) {
+            panStartRef.current = null;
+            if (event.currentTarget.hasPointerCapture(event.pointerId)) event.currentTarget.releasePointerCapture(event.pointerId);
+            return;
+          }
           stopAutoScroll();
           if (seekingRef.current) {
             seekingRef.current = false;
@@ -554,7 +587,7 @@ export const ScoreCanvas = forwardRef<ScoreCanvasHandle, ScoreCanvasProps>(funct
         }}
         onPointerCancel={cancelInteraction}
         onLostPointerCapture={() => {
-          if (dragStartRef.current || seekingRef.current) cancelInteraction();
+          if (dragStartRef.current || seekingRef.current || panStartRef.current) cancelInteraction();
         }}
       >
         <div className="score-measure-seal" aria-label={`当前第 ${currentMeasure} 小节`}><small>M</small><strong>{currentMeasure}</strong></div>

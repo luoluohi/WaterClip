@@ -1,7 +1,15 @@
 import { describe, expect, it } from 'vitest';
-import { autoScrollDelta, intersects, isMeaningfulDrag, normalizeDragRect, pointRelativeToHost, pointerGesture } from './interaction';
+import { autoScrollDelta, intersects, isMeaningfulDrag, normalizeDragRect, panScrollTarget, pointRelativeToHost, pointerGesture, wheelScrollDelta } from './interaction';
 
 describe('score pointer geometry', () => {
+  it('maps shift-wheel to horizontal scrolling', () => {
+    expect(wheelScrollDelta(0, 120, true)).toEqual({ x: 120, y: 0 });
+    expect(wheelScrollDelta(10, 120, false)).toEqual({ x: 10, y: 120 });
+  });
+
+  it('pans content opposite to a middle-button drag', () => {
+    expect(panScrollTarget({ x: 100, y: 100 }, { x: 70, y: 130 }, { x: 400, y: 200 })).toEqual({ x: 430, y: 170 });
+  });
   it('uses the scrolled host rectangle as the single source of content coordinates', () => {
     expect(pointRelativeToHost(150, 80, { left: -250, top: -20 })).toEqual({ x: 400, y: 100 });
   });

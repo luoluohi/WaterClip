@@ -28,6 +28,21 @@ export function intersects(rect: Rect, target: Rect): boolean {
 
 export interface AutoScrollDelta { x: number; y: number }
 
+export function wheelScrollDelta(deltaX: number, deltaY: number, shiftKey: boolean): AutoScrollDelta {
+  return shiftKey ? { x: deltaX || deltaY, y: 0 } : { x: deltaX, y: deltaY };
+}
+
+export function panScrollTarget(
+  origin: Point,
+  current: Point,
+  initialScroll: Point
+): Point {
+  return {
+    x: Math.max(0, initialScroll.x - (current.x - origin.x)),
+    y: Math.max(0, initialScroll.y - (current.y - origin.y))
+  };
+}
+
 /** Smoothly accelerates when a captured pointer moves beyond a viewport edge. */
 export function autoScrollDelta(
   point: Point,

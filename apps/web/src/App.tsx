@@ -6,7 +6,7 @@ import {
 } from 'lucide-react';
 import type { Shot, ShotGroup, ShotSize, SplitLayout } from './domain';
 import { buildImagePrompt, occurrenceLabel, SHOT_SIZES } from './domain';
-import { ScoreCanvas, type PlaybackPosition, type ScoreCanvasHandle } from './score/ScoreCanvas';
+import { ScoreCanvas, type PlaybackPosition, type ScoreCanvasHandle, type ScoreSelection } from './score/ScoreCanvas';
 import type { ScoreSectionMarker } from './score/navigation';
 import { TrackLevelBus, isTrackAudible } from './score/trackLevels';
 import { TrackLevelMeter } from './score/TrackLevelMeter';
@@ -491,13 +491,38 @@ function DetachedScoreWindow({ channelName }: { channelName: string }) {
   const scoreRef = useRef<ScoreCanvasHandle>(null);
   const [levelBus] = useState(() => new TrackLevelBus());
   const [snapshot, setSnapshot] = useState<ScoreWindowSnapshot>({ playing: false, mutedTracks: [], soloTracks: [], zoom: 0.82 });
+  const [selection, setSelection] = useState<ScoreSelection>();
   const connectionRef = useRef<ReturnType<typeof createScoreWindowConnection> | undefined>(undefined);
+
   useEffect(() => {
     const connection = createScoreWindowConnection(channelName);
     connectionRef.current = connection;
     const bridge = connectScoreWindowGuest(connection, setSnapshot);
     return () => { bridge.close(); levelBus.destroy(); };
   }, [channelName, levelBus]);
-  const command = (value: Parameters<ReturnType<typeof connectScoreWindowGuest>['command']>[0]) => connectionRef.current?.post({ type: 'command', command: value });
-  return <main className="detached-score-shell"><header><div><span className="eyebrow">DETACHED CONDUCTOR SCORE</span><h1>{snapshot.scoreName || 'WaterClip 乐谱窗口'}</h1></div><div className="detached-controls"><button className="transport" onClick={() => command({ kind: 'play-pause' })}>{snapshot.playing ? <Pause size={17} /> : <Play size={17} />}</button><span className="timecode">{formatTime(snapshot.position?.currentTime ?? 0)}</span><input aria-label="播放位置" type="range" min="0" max="1000" value={snapshot.position?.endTick ? Math.round((snapshot.position.currentTick / snapshot.position.endTick) * 1000) : 0} onChange={(event) => command({ kind: 'seek-ratio', ratio: Number(event.target.value) / 1000 })} /></div></header><section>{snapshot.scoreData ? <ScoreCanvas ref={scoreRef} data={snapshot.scoreData} hardwareAcceleration activeShotCells={[]} autoPageTurn={false} mutedTracks={new Set(snapshot.mutedTracks)} soloTracks={new Set(snapshot.soloTracks)} onToggleTrack={(trackIndex, mode) => command({ kind: 'toggle-track', trackIndex, mode })} levelBus={levelBus} onParts={() => undefined} onSelection={() => undefined} onPosition={() => undefined} onPlayingChange={() => undefined} onSections={() => undefined} onError={() => undefined} /> : <div className="score-empty">等待主窗口发送乐谱…</div>}</section></main>;
+
+  useEffect(() => {
+    if (!snapshot.position?.endTick) return;
+    scoreRef.current?.seekRatio(snapshot.position.currentTick / snapshot.position.endTick);
+  }, [snapshot.position?.currentTick, snapshot.position?.endTick]);
+
+  const command = (value: Parameters<ReturnType<typeof connectScoreWindowGuest>['command']>[0]) => {
+    connectionRef.current?.post({ type: 'command', command: value });
+  };
+
+  return (
+    <main className="detached-score-shell">
+      <header>
+        <div><span className="eyebrow">DETACHED CONDUCTOR SCORE</span><h1>{snapshot.scoreName || 'WaterClip 乐谱窗口'}</h1></div>
+        <div className="detached-controls">
+          <button className="transport" onClick={() => command({ kind: 'play-pause' })}>{snapshot.playing ? <Pause size={17} /> : <Play size={17} />}</button>
+          <span className="timecode">{formatTime(snapshot.position?.currentTime ?? 0)}</span>
+          <input aria-label="播放位置" type="range" min="0" max="1000" value={snapshot.position?.endTick ? Math.round((snapshot.position.currentTick / snapshot.position.endTick) * 1000) : 0} onChange={(event) => command({ kind: 'seek-ratio', ratio: Number(event.target.value) / 1000 })} />
+        </div>
+      </header>
+      <section>
+        {snapshot.scoreData ? <ScoreCanvas ref={scoreRef} data={snapshot.scoreData} selection={selection} hardwareAcceleration activeShotCells={[]} autoPageTurn={false} mutedTracks={new Set(snapshot.mutedTracks)} soloTracks={new Set(snapshot.soloTracks)} onToggleTrack={(trackIndex, mode) => command({ kind: 'toggle-track', trackIndex, mode })} levelBus={levelBus} onParts={() => undefined} onSelection={setSelection} onPosition={() => undefined} onPlayingChange={() => undefined} onSections={() => undefined} onError={() => undefined} /> : <div className="score-empty">等待主窗口发送乐谱…</div>}
+      </section>
+    </main>
+  );
 }
