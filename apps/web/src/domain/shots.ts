@@ -49,7 +49,7 @@ export function createShotGroup(
     id: idFactory(),
     partId: part.id,
     partName: part.name,
-    size: options.size ?? '中景',
+    size: options.size ?? '近景',
     description: options.description ?? '',
     generationStatus: 'idle'
   }));

@@ -120,6 +120,8 @@ describe('workspace store', () => {
       apiKey: 'local-only',
       museScorePath: 'C:\\Program Files\\MuseScore 4\\bin\\MuseScore4.exe',
       autoPageTurn: true,
+      llmModel: 'gpt-5-mini',
+      hardwareAcceleration: true,
     });
 
     expect(JSON.parse(localStorage.getItem('waterclip.settings') ?? '{}')).toMatchObject({

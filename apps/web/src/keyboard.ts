@@ -1,4 +1,4 @@
-export type WorkspaceShortcut = 'undo' | 'redo' | 'delete' | 'add-group';
+export type WorkspaceShortcut = 'undo' | 'redo' | 'delete' | 'add-group' | 'clear-selection';
 
 interface ShortcutEvent {
   key: string;
@@ -16,7 +16,8 @@ export function resolveWorkspaceShortcut(event: ShortcutEvent): WorkspaceShortcu
   if ((event.ctrlKey || event.metaKey) && event.key.toLowerCase() === 'z') {
     return event.shiftKey ? 'redo' : 'undo';
   }
+  if ((event.ctrlKey || event.metaKey) && event.key.toLowerCase() === 'd') return 'clear-selection';
   if (event.key === 'Delete') return 'delete';
-  if (event.key === 'Enter' && !target?.closest('button')) return 'add-group';
+  if (event.key === 'Enter') return 'add-group';
   return undefined;
 }

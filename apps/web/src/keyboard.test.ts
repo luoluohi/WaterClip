@@ -18,6 +18,8 @@ describe('workspace keyboard shortcuts', () => {
     expect(shortcut('z', document.body, { ctrlKey: true })).toBe('undo');
     expect(shortcut('Z', document.body, { ctrlKey: true, shiftKey: true })).toBe('redo');
     expect(shortcut('Delete')).toBe('delete');
+    expect(shortcut('d', document.body, { ctrlKey: true })).toBe('clear-selection');
+    expect(shortcut('Enter', document.createElement('button'))).toBe('add-group');
   });
 
   it('does not intercept native editing shortcuts inside form and editable fields', () => {
@@ -31,5 +33,6 @@ describe('workspace keyboard shortcuts', () => {
     expect(shortcut('z', input, { ctrlKey: true })).toBeUndefined();
     expect(shortcut('Delete', textarea)).toBeUndefined();
     expect(shortcut('z', nested, { ctrlKey: true, shiftKey: true })).toBeUndefined();
+    expect(shortcut('d', input, { ctrlKey: true })).toBeUndefined();
   });
 });

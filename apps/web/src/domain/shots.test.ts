@@ -15,6 +15,10 @@ const ids = (...values: string[]) => {
 };
 
 describe('分镜领域规则', () => {
+  it('新建子镜头默认使用近景', () => {
+    const group = createShotGroup(parts.slice(0, 1), { startMeasure: 1, endMeasure: 1, occurrence: 1 }, { idFactory: ids('s', 'g') });
+    expect(group.shots[0].size).toBe('近景');
+  });
   it('允许相同声部与范围创建多个不同分镜组', () => {
     const range = { startMeasure: 8, endMeasure: 4, occurrence: 2 as const };
     const first = createShotGroup(parts.slice(0, 2), range, { idFactory: ids('a', 'b', 'g1'), now: '2026-01-01' });

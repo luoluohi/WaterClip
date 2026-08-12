@@ -17,6 +17,8 @@ export interface AppSettings {
   apiKey: string;
   museScorePath: string;
   autoPageTurn: boolean;
+  llmModel: string;
+  hardwareAcceleration: boolean;
 }
 
 interface WorkspaceState {
@@ -99,9 +101,9 @@ const initialProject: Project = {
 function loadSettings(): AppSettings {
   try {
     const value = localStorage.getItem('waterclip.settings');
-    if (value) return { baseUrl: 'https://api.openai.com/v1', apiKey: '', museScorePath: '', autoPageTurn: false, ...JSON.parse(value) };
+    if (value) return { baseUrl: 'https://api.openai.com/v1', apiKey: '', museScorePath: '', autoPageTurn: false, llmModel: 'gpt-5-mini', hardwareAcceleration: true, ...JSON.parse(value) };
   } catch { /* corrupted settings fall back safely */ }
-  return { baseUrl: 'https://api.openai.com/v1', apiKey: '', museScorePath: '', autoPageTurn: false };
+  return { baseUrl: 'https://api.openai.com/v1', apiKey: '', museScorePath: '', autoPageTurn: false, llmModel: 'gpt-5-mini', hardwareAcceleration: true };
 }
 
 export const useWorkspace = create<WorkspaceState>((set, get) => ({
@@ -115,7 +117,8 @@ export const useWorkspace = create<WorkspaceState>((set, get) => ({
   addGroup: () => {
     const { selection, parts } = get();
     if (!selection) return undefined;
-    const selectedParts = selection.partIds.map((id) => parts.find((part) => part.id === id)).filter(Boolean) as ScorePart[];
+    const selectedPartIds = selection.cells ? [...new Set(selection.cells.map((cell) => cell.partId))] : selection.partIds;
+    const selectedParts = selectedPartIds.map((id) => parts.find((part) => part.id === id)).filter(Boolean) as ScorePart[];
     if (!selectedParts.length) return undefined;
     const group = createShotGroup(selectedParts, {
       startMeasure: selection.startMeasure,

@@ -25,3 +25,20 @@ export function pointerGesture(start: Point, end: Point, minimumSize = 4): 'clic
 export function intersects(rect: Rect, target: Rect): boolean {
   return rect.x <= target.x + target.w && rect.x + rect.w >= target.x && rect.y <= target.y + target.h && rect.y + rect.h >= target.y;
 }
+
+export interface AutoScrollDelta { x: number; y: number }
+
+/** Smoothly accelerates when a captured pointer moves beyond a viewport edge. */
+export function autoScrollDelta(
+  point: Point,
+  viewport: Pick<DOMRect, 'left' | 'right' | 'top' | 'bottom'>,
+  edgeSize = 44,
+  maximum = 18
+): AutoScrollDelta {
+  const axis = (value: number, low: number, high: number) => {
+    if (value < low + edgeSize) return -maximum * Math.min(1, (low + edgeSize - value) / edgeSize);
+    if (value > high - edgeSize) return maximum * Math.min(1, (value - (high - edgeSize)) / edgeSize);
+    return 0;
+  };
+  return { x: axis(point.x, viewport.left, viewport.right), y: axis(point.y, viewport.top, viewport.bottom) };
+}

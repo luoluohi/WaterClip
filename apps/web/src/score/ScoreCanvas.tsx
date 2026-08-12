@@ -1,16 +1,15 @@
 import { useEffect, useImperativeHandle, useRef, useState, forwardRef } from 'react';
 import * as alphaTab from '@coderline/alphatab';
 import type { ScorePart } from '../domain';
-import { intersects, isMeaningfulDrag, normalizeDragRect, pointRelativeToHost, pointerGesture, type Point } from './interaction';
+import { autoScrollDelta, intersects, isMeaningfulDrag, normalizeDragRect, pointRelativeToHost, pointerGesture, type Point } from './interaction';
 import type { PlayedNoteEvent, TrackLevelBus } from './trackLevels';
 import { findFirstOverlappingMeasure, normalizeHorizontalBarWidths, type MeasureBounds } from './horizontalLayout';
 import { buildSectionMarkers, pageTurnTarget, playbackRequestAction, seekRevealTarget, type ScoreSectionMarker } from './navigation';
+import { mergeSelection, rangesHaveCell, selectionHasCell, type ScoreCellRange, type ScoreSelectionCell, type SemanticScoreSelection } from './selection';
+import { detectScoreRenderCapabilities, resolveScoreRenderStrategy, scoreRenderClassName } from './renderPerformance';
 
-export interface ScoreSelection {
-  partIds: string[];
-  startMeasure: number;
-  endMeasure: number;
-}
+export type ScoreSelection = SemanticScoreSelection;
+export type { ScoreSelectionCell } from './selection';
 
 export interface PlaybackPosition {
   currentTime: number;
@@ -35,13 +34,15 @@ interface ScoreCanvasProps {
   data?: Uint8Array;
   customSoundFont?: Uint8Array;
   selection?: ScoreSelection;
+  activeShotCells?: readonly ScoreCellRange[];
+  hardwareAcceleration: boolean;
   autoPageTurn: boolean;
   mutedTracks: ReadonlySet<number>;
   soloTracks: ReadonlySet<number>;
   onToggleTrack(index: number, mode: 'mute' | 'solo'): void;
   levelBus: TrackLevelBus;
   onParts(parts: ScorePart[]): void;
-  onSelection(selection: ScoreSelection): void;
+  onSelection(selection?: ScoreSelection): void;
   onPosition(position: PlaybackPosition): void;
   onPlayingChange(playing: boolean): void;
   onSections(sections: ScoreSectionMarker[]): void;
@@ -53,15 +54,19 @@ interface ScoreMeasureTag { index: number; x: number; top: number }
 interface SelectionHighlight { id: string; x: number; y: number; w: number; h: number }
 
 export const ScoreCanvas = forwardRef<ScoreCanvasHandle, ScoreCanvasProps>(function ScoreCanvas(
-  { data, customSoundFont, selection, autoPageTurn, mutedTracks, soloTracks, onToggleTrack, levelBus, onParts, onSelection, onPosition, onPlayingChange, onSections, onError },
+  { data, customSoundFont, selection, activeShotCells = [], hardwareAcceleration, autoPageTurn, mutedTracks, soloTracks, onToggleTrack, levelBus, onParts, onSelection, onPosition, onPlayingChange, onSections, onError },
   ref
 ) {
   const hostRef = useRef<HTMLDivElement>(null);
   const viewportRef = useRef<HTMLDivElement>(null);
   const apiRef = useRef<alphaTab.AlphaTabApi | null>(null);
   const dragStartRef = useRef<Point | null>(null);
+  const dragToggleRef = useRef(false);
+  const lastPointerClientRef = useRef<Point | null>(null);
+  const autoScrollFrameRef = useRef<number | undefined>(undefined);
   const seekingRef = useRef(false);
   const selectionElRef = useRef<HTMLDivElement>(null);
+  const measureTagsElRef = useRef<HTMLDivElement>(null);
   const currentPositionRef = useRef<PlaybackPosition | null>(null);
   const pendingPlayRef = useRef(false);
   const playbackTimeoutRef = useRef<number | undefined>(undefined);
@@ -74,6 +79,7 @@ export const ScoreCanvas = forwardRef<ScoreCanvasHandle, ScoreCanvasProps>(funct
   const [rowTags, setRowTags] = useState<ScoreRowTag[]>([]);
   const [measureTags, setMeasureTags] = useState<ScoreMeasureTag[]>([]);
   const [selectionHighlights, setSelectionHighlights] = useState<SelectionHighlight[]>([]);
+  const [activeShotHighlights, setActiveShotHighlights] = useState<SelectionHighlight[]>([]);
   const [currentMeasure, setCurrentMeasure] = useState(1);
   const callbacksRef = useRef({ onParts, onSelection, onPosition, onPlayingChange, onSections, onError });
   callbacksRef.current = { onParts, onSelection, onPosition, onPlayingChange, onSections, onError };
@@ -160,6 +166,7 @@ export const ScoreCanvas = forwardRef<ScoreCanvasHandle, ScoreCanvasProps>(funct
     setZoom: (zoom) => {
       const api = apiRef.current;
       if (!api) return;
+      callbacksRef.current.onSelection(undefined);
       api.settings.display.scale = zoom;
       api.updateSettings();
       api.render();
@@ -168,8 +175,9 @@ export const ScoreCanvas = forwardRef<ScoreCanvasHandle, ScoreCanvasProps>(funct
 
   useEffect(() => {
     if (!hostRef.current || !viewportRef.current) return;
+    const renderStrategy = resolveScoreRenderStrategy(hardwareAcceleration, detectScoreRenderCapabilities());
     const api = new alphaTab.AlphaTabApi(hostRef.current, {
-      core: { engine: 'svg', enableLazyLoading: false, fontDirectory: '/font/', useWorkers: false },
+      core: { engine: renderStrategy.engine, enableLazyLoading: false, fontDirectory: '/font/', useWorkers: renderStrategy.useWorkers },
       display: {
         staveProfile: 'score',
         scale: 0.82,
@@ -220,18 +228,19 @@ export const ScoreCanvas = forwardRef<ScoreCanvasHandle, ScoreCanvasProps>(funct
       const measures = new Map<number, MeasureBounds>();
       const measureTagValues: ScoreMeasureTag[] = [];
       const barRects: Array<SelectionHighlight & { measure: number; partId: string }> = [];
+      let barRectIndex = 0;
       for (const system of lookup.staffSystems) {
         for (const masterBar of system.bars) {
           if (!measures.has(masterBar.index)) {
             measures.set(masterBar.index, { index: masterBar.index, x: masterBar.realBounds.x, width: masterBar.realBounds.w });
-            measureTagValues.push({ index: masterBar.index + 1, x: masterBar.realBounds.x + host.offsetLeft + 5, top: masterBar.realBounds.y + host.offsetTop + 5 });
+            measureTagValues.push({ index: masterBar.index + 1, x: masterBar.realBounds.x + host.offsetLeft + 5, top: 7 });
           }
           for (const bar of masterBar.bars) {
             const trackIndex = bar.bar.staff.track.index;
             const top = bar.realBounds.y + host.offsetTop + 2;
             tops.set(trackIndex, Math.min(tops.get(trackIndex) ?? Number.POSITIVE_INFINITY, top));
             barRects.push({
-              id: `${masterBar.index}-${trackIndex}-${bar.bar.staff.index}`,
+              id: `${masterBar.index}-${trackIndex}-${bar.bar.staff.index}-${barRectIndex++}`,
               measure: masterBar.index + 1,
               partId: `track-${trackIndex}`,
               x: bar.realBounds.x + host.offsetLeft,
@@ -307,13 +316,14 @@ export const ScoreCanvas = forwardRef<ScoreCanvasHandle, ScoreCanvasProps>(funct
       callbacksRef.current.onError(error.message || '乐谱载入失败');
     });
     return () => {
+      stopAutoScroll();
       api.destroy();
       levelBus.releaseAll();
       pendingPlayRef.current = false;
       window.clearTimeout(playbackTimeoutRef.current);
       apiRef.current = null;
     };
-  }, [levelBus]);
+  }, [hardwareAcceleration, levelBus]);
 
   useEffect(() => {
     if (data && apiRef.current) {
@@ -332,7 +342,7 @@ export const ScoreCanvas = forwardRef<ScoreCanvasHandle, ScoreCanvasProps>(funct
         callbacksRef.current.onError(error instanceof Error ? error.message : '乐谱载入失败');
       }
     }
-  }, [data, levelBus]);
+  }, [data, hardwareAcceleration, levelBus]);
 
   useEffect(() => {
     if (customSoundFont && apiRef.current) apiRef.current.loadSoundFont(customSoundFont, false);
@@ -343,11 +353,46 @@ export const ScoreCanvas = forwardRef<ScoreCanvasHandle, ScoreCanvasProps>(funct
       setSelectionHighlights([]);
       return;
     }
-    const partIds = new Set(selection.partIds);
     setSelectionHighlights(barRectsRef.current
-      .filter((rect) => rect.measure >= selection.startMeasure && rect.measure <= selection.endMeasure && partIds.has(rect.partId))
+      .filter((rect) => selectionHasCell(selection, rect.partId, rect.measure))
       .map(({ id, x, y, w, h }) => ({ id, x, y, w, h })));
   }, [selection, measureTags]);
+
+  useEffect(() => {
+    setActiveShotHighlights(barRectsRef.current
+      .filter((rect) => rangesHaveCell(activeShotCells, rect.partId, rect.measure))
+      .map(({ id, x, y, w, h }) => ({ id, x, y, w, h })));
+  }, [activeShotCells, measureTags]);
+
+  useEffect(() => {
+    const viewport = viewportRef.current;
+    const tags = measureTagsElRef.current;
+    if (!viewport || !tags) return;
+    let frame: number | undefined;
+    const sync = () => {
+      if (frame !== undefined) return;
+      frame = window.requestAnimationFrame(() => {
+        frame = undefined;
+        tags.style.transform = `translate3d(0, ${viewport.scrollTop}px, 0)`;
+      });
+    };
+    viewport.addEventListener('scroll', sync, { passive: true });
+    sync();
+    return () => {
+      viewport.removeEventListener('scroll', sync);
+      if (frame !== undefined) window.cancelAnimationFrame(frame);
+    };
+  }, []);
+
+  useEffect(() => {
+    const clearSelection = (event: KeyboardEvent) => {
+      if (!event.ctrlKey || event.altKey || event.metaKey || event.key.toLowerCase() !== 'd') return;
+      event.preventDefault();
+      callbacksRef.current.onSelection(undefined);
+    };
+    window.addEventListener('keydown', clearSelection, true);
+    return () => window.removeEventListener('keydown', clearSelection, true);
+  }, []);
 
   const pointFromEvent = (event: React.PointerEvent): Point => {
     const host = hostRef.current!;
@@ -373,25 +418,51 @@ export const ScoreCanvas = forwardRef<ScoreCanvasHandle, ScoreCanvasProps>(funct
     if (!start || !apiRef.current?.boundsLookup) return;
     const rect = normalizeDragRect(start, end);
     if (!isMeaningfulDrag(rect)) return;
-    const partIds = new Set<string>();
-    const measures = new Set<number>();
+    const cells = new Map<string, ScoreSelectionCell>();
     for (const system of apiRef.current.boundsLookup.staffSystems) {
       for (const masterBar of system.bars) {
         for (const bar of masterBar.bars) {
           if (intersects(rect, bar.realBounds)) {
-            partIds.add(`track-${bar.bar.staff.track.index}`);
-            measures.add(masterBar.index + 1);
+            const cell = { partId: `track-${bar.bar.staff.track.index}`, measure: masterBar.index + 1 };
+            cells.set(`${cell.partId}\u0000${cell.measure}`, cell);
           }
         }
       }
     }
-    if (partIds.size && measures.size) {
-      const values = [...measures];
-      callbacksRef.current.onSelection({ partIds: [...partIds], startMeasure: Math.min(...values), endMeasure: Math.max(...values) });
-    }
+    if (cells.size) callbacksRef.current.onSelection(mergeSelection(selection, cells.values(), dragToggleRef.current));
+  };
+
+  const stopAutoScroll = () => {
+    lastPointerClientRef.current = null;
+    if (autoScrollFrameRef.current !== undefined) window.cancelAnimationFrame(autoScrollFrameRef.current);
+    autoScrollFrameRef.current = undefined;
+  };
+
+  const runAutoScroll = () => {
+    if (autoScrollFrameRef.current !== undefined) return;
+    const step = () => {
+      autoScrollFrameRef.current = undefined;
+      const viewport = viewportRef.current;
+      const client = lastPointerClientRef.current;
+      const start = dragStartRef.current;
+      if (!viewport || !client || !start) return;
+      const delta = autoScrollDelta(client, viewport.getBoundingClientRect());
+      if (delta.x || delta.y) {
+        viewport.scrollBy(delta.x, delta.y);
+        updateSelectionVisual(start, pointFromClient(client));
+        autoScrollFrameRef.current = window.requestAnimationFrame(step);
+      }
+    };
+    autoScrollFrameRef.current = window.requestAnimationFrame(step);
+  };
+
+  const pointFromClient = (client: Point): Point => {
+    const host = hostRef.current!;
+    return pointRelativeToHost(client.x, client.y, host.getBoundingClientRect());
   };
 
   const cancelInteraction = () => {
+    stopAutoScroll();
     dragStartRef.current = null;
     seekingRef.current = false;
     if (selectionElRef.current) selectionElRef.current.hidden = true;
@@ -433,7 +504,7 @@ export const ScoreCanvas = forwardRef<ScoreCanvasHandle, ScoreCanvasProps>(funct
   };
 
   return (
-    <div className="score-viewport" ref={viewportRef} tabIndex={0} aria-label="横向乐谱工作区">
+    <div className={`score-viewport ${scoreRenderClassName(resolveScoreRenderStrategy(hardwareAcceleration, detectScoreRenderCapabilities()))}`} ref={viewportRef} tabIndex={0} aria-label="横向乐谱工作区">
       <div
         className="score-surface"
         onPointerDown={(event) => {
@@ -447,6 +518,8 @@ export const ScoreCanvas = forwardRef<ScoreCanvasHandle, ScoreCanvasProps>(funct
             return;
           }
           dragStartRef.current = point;
+          dragToggleRef.current = event.ctrlKey;
+          lastPointerClientRef.current = { x: event.clientX, y: event.clientY };
           event.currentTarget.setPointerCapture(event.pointerId);
         }}
         onPointerMove={(event) => {
@@ -455,10 +528,13 @@ export const ScoreCanvas = forwardRef<ScoreCanvasHandle, ScoreCanvasProps>(funct
             return;
           }
           if (!dragStartRef.current) return;
+          lastPointerClientRef.current = { x: event.clientX, y: event.clientY };
+          runAutoScroll();
           const point = pointFromEvent(event);
           if (pointerGesture(dragStartRef.current, point) === 'drag') updateSelectionVisual(dragStartRef.current, point);
         }}
         onPointerUp={(event) => {
+          stopAutoScroll();
           if (seekingRef.current) {
             seekingRef.current = false;
             seekAtPoint(pointFromEvent(event));
@@ -482,11 +558,14 @@ export const ScoreCanvas = forwardRef<ScoreCanvasHandle, ScoreCanvasProps>(funct
         }}
       >
         <div className="score-measure-seal" aria-label={`当前第 ${currentMeasure} 小节`}><small>M</small><strong>{currentMeasure}</strong></div>
-        <div className="score-measure-tags" aria-hidden="true">
-          {measureTags.map((tag) => <span key={tag.index} className={`score-measure-tag ${tag.index === currentMeasure ? 'is-playing' : ''} ${selection && tag.index >= selection.startMeasure && tag.index <= selection.endMeasure ? 'is-selected' : ''}`} style={{ left: tag.x, top: tag.top }}>{tag.index}</span>)}
+        <div className="score-measure-tags" ref={measureTagsElRef} aria-hidden="true">
+          {measureTags.map((tag) => <span key={tag.index} className={`score-measure-tag ${tag.index === currentMeasure ? 'is-playing' : ''} ${selection?.partIds.some((partId) => selectionHasCell(selection, partId, tag.index)) ? 'is-selected' : ''}`} style={{ left: tag.x, top: tag.top }}>{tag.index}</span>)}
         </div>
         <div className="score-selection-highlights" aria-hidden="true">
           {selectionHighlights.map((rect) => <i key={rect.id} style={{ left: rect.x, top: rect.y, width: rect.w, height: rect.h }} />)}
+        </div>
+        <div className="score-active-shot-highlights" aria-hidden="true">
+          {activeShotHighlights.map((rect) => <i key={rect.id} style={{ left: rect.x, top: rect.y, width: rect.w, height: rect.h }} />)}
         </div>
         <div className="score-part-tags">
           {rowTags.map((tag) => <div className="score-part-tag" style={{ top: tag.top }} key={tag.id}><span><b>{String(tag.index + 1).padStart(2, '0')}</b>{tag.name}</span><span className="score-part-monitor"><button className={mutedTracks.has(tag.index) ? 'active mute' : ''} onClick={() => onToggleTrack(tag.index, 'mute')} title={`${tag.name} 静音`}>M</button><button className={soloTracks.has(tag.index) ? 'active solo' : ''} onClick={() => onToggleTrack(tag.index, 'solo')} title={`${tag.name} 独奏`}>S</button></span></div>)}
