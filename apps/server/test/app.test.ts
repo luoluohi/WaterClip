@@ -1,6 +1,7 @@
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import type { FastifyInstance } from 'fastify';
 import { buildApp } from '../src/app.js';
+import { ScoreConversionError } from '../src/musescore.js';
 import { mkdtemp, rm, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
@@ -146,15 +147,35 @@ describe('POST /api/scores/convert', () => {
     expect(response.json().error).toContain('设置面板');
   });
 
-  it('转换器失败时返回 422 且不泄露内部错误', async () => {
+  it('转换进程异常时返回可重试的502且不泄露内部错误', async () => {
     const app = await appFor({
       detectMuseScore: async () => ({ path: 'MuseScore4', version: '4.6' }),
       convertMscz: async () => { throw new Error('C:\\private\\temp\\secret.mscz'); },
     });
     const upload = multipart('demo.mscz', 'broken');
     const response = await app.inject({ method: 'POST', url: '/api/scores/convert', ...upload });
-    expect(response.statusCode).toBe(422);
+    expect(response.statusCode).toBe(502);
     expect(response.body).not.toContain('private');
+  });
+
+  it('仅对确定的无效转换产物返回422', async () => {
+    const app = await appFor({
+      detectMuseScore: async () => ({ path: 'MuseScore4', version: '4.6' }),
+      convertMscz: async () => { throw new ScoreConversionError('invalid-output'); },
+    });
+    const response = await app.inject({ method: 'POST', url: '/api/scores/convert', ...multipart('demo.mscz', 'broken') });
+    expect(response.statusCode).toBe(422);
+    expect(response.json().error).toContain('有效的 MusicXML');
+  });
+
+  it('转换超时使用504而不是误报为乐谱损坏', async () => {
+    const app = await appFor({
+      detectMuseScore: async () => ({ path: 'MuseScore4', version: '4.6' }),
+      convertMscz: async () => { throw new ScoreConversionError('timeout'); },
+    });
+    const response = await app.inject({ method: 'POST', url: '/api/scores/convert', ...multipart('demo.mscz', 'score') });
+    expect(response.statusCode).toBe(504);
+    expect(response.json().error).toContain('超时');
   });
 
   it('拒绝未知扩展名', async () => {
@@ -256,5 +277,77 @@ describe('POST /api/images/generate', () => {
     });
     expect(response.statusCode).toBe(504);
     expect(response.json().error).toContain('超时');
+  });
+});
+
+describe('POST /api/prompts/enhance', () => {
+  it('使用兼容 chat completions 接口并仅返回生成后的提示词', async () => {
+    const fetchImpl = vi.fn(async (_url: string | URL | Request, init?: RequestInit) => {
+      expect(init?.headers).toMatchObject({ Authorization: 'Bearer llm-secret', 'Content-Type': 'application/json' });
+      const payload = JSON.parse(String(init?.body));
+      expect(payload.model).toBe('custom-model');
+      expect(payload.messages.at(-1)).toEqual({ role: 'user', content: '小提琴 近景 运弓' });
+      expect(String(init?.body)).not.toContain('llm-secret');
+      return new Response(JSON.stringify({ choices: [{ message: { content: '舞台暖光下的小提琴近景，侧面机位捕捉运弓。' } }] }), {
+        headers: { 'content-type': 'application/json' },
+      });
+    }) as typeof fetch;
+    const app = await appFor({ fetchImpl });
+    const response = await app.inject({
+      method: 'POST',
+      url: '/api/prompts/enhance',
+      payload: {
+        baseUrl: 'https://llm.example/v1/',
+        apiKey: 'llm-secret',
+        model: 'custom-model',
+        prompt: '小提琴 近景 运弓',
+      },
+    });
+    expect(response.statusCode).toBe(200);
+    expect(fetchImpl).toHaveBeenCalledWith('https://llm.example/v1/chat/completions', expect.anything());
+    expect(response.json()).toEqual({ prompt: '舞台暖光下的小提琴近景，侧面机位捕捉运弓。' });
+    expect(response.body).not.toContain('llm-secret');
+  });
+
+  it('保留上游状态但归一化错误正文，避免反射密钥', async () => {
+    const fetchImpl = vi.fn(async () => new Response('{"error":{"message":"request Authorization: Bearer never-log-me"}}', {
+      status: 429,
+      headers: { 'content-type': 'application/json' },
+    })) as typeof fetch;
+    const app = await appFor({ fetchImpl });
+    const response = await app.inject({
+      method: 'POST',
+      url: '/api/prompts/enhance',
+      payload: { baseUrl: 'https://llm.example/v1', apiKey: 'never-log-me', prompt: '长笛 全景' },
+    });
+    expect(response.statusCode).toBe(429);
+    expect(response.json()).toEqual({ error: 'LLM 服务请求失败', upstreamStatus: 429 });
+    expect(response.body).not.toContain('never-log-me');
+  });
+
+  it('拒绝非 HTTP Base URL且不发出请求', async () => {
+    const fetchImpl = vi.fn() as unknown as typeof fetch;
+    const app = await appFor({ fetchImpl });
+    const response = await app.inject({
+      method: 'POST',
+      url: '/api/prompts/enhance',
+      payload: { baseUrl: 'file:///secret', apiKey: 'secret', prompt: '钢琴 特写' },
+    });
+    expect(response.statusCode).toBe(400);
+    expect(fetchImpl).not.toHaveBeenCalled();
+    expect(response.body).not.toContain('secret');
+  });
+
+  it('超时返回504', async () => {
+    const fetchImpl = vi.fn((_url: string | URL | Request, init?: RequestInit) => new Promise<Response>((_resolve, reject) => {
+      init?.signal?.addEventListener('abort', () => reject(new DOMException('aborted', 'AbortError')));
+    })) as typeof fetch;
+    const app = await appFor({ fetchImpl, llmTimeoutMs: 5 });
+    const response = await app.inject({
+      method: 'POST',
+      url: '/api/prompts/enhance',
+      payload: { baseUrl: 'https://llm.example/v1', apiKey: 'secret', prompt: '钢琴 特写' },
+    });
+    expect(response.statusCode).toBe(504);
   });
 });

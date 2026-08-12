@@ -4,8 +4,9 @@ import cors from '@fastify/cors';
 import staticPlugin from '@fastify/static';
 import { extname } from 'node:path';
 import { existsSync } from 'node:fs';
-import { convertMsczToMusicXml, detectMuseScore, type MuseScoreInfo } from './musescore.js';
+import { convertMsczToMusicXml, detectMuseScore, ScoreConversionError, type MuseScoreInfo } from './musescore.js';
 import { proxyImageGeneration, type ImageGenerateInput } from './image-proxy.js';
+import { proxyPromptEnhancement, type PromptEnhanceInput } from './llm-proxy.js';
 
 const MAX_SCORE_BYTES = 50 * 1024 * 1024;
 const PASSTHROUGH_EXTENSIONS = new Set(['.musicxml', '.xml', '.mxl']);
@@ -15,6 +16,7 @@ export interface AppDependencies {
   convertMscz?: typeof convertMsczToMusicXml;
   fetchImpl?: typeof fetch;
   imageTimeoutMs?: number;
+  llmTimeoutMs?: number;
   staticRoot?: string;
 }
 
@@ -85,7 +87,11 @@ export async function buildApp(deps: AppDependencies = {}): Promise<FastifyInsta
       return reply.type('application/vnd.recordare.musicxml+xml').send(converted);
     } catch (error) {
       request.log.warn({ err: error }, 'MuseScore conversion failed');
-      throw clientError('MuseScore 转换失败或超时，请检查乐谱文件', 422);
+      if (error instanceof ScoreConversionError) {
+        if (error.reason === 'timeout') throw clientError('MuseScore 转换超时，请稍后重试', 504);
+        if (error.reason === 'invalid-output') throw clientError('乐谱无法转换为有效的 MusicXML，请检查文件是否损坏', 422);
+      }
+      throw clientError('MuseScore 转换进程异常，请稍后重试', 502);
     }
   });
 
@@ -104,6 +110,24 @@ export async function buildApp(deps: AppDependencies = {}): Promise<FastifyInsta
       if (/Base URL|API Key|提示词|参考图/.test(message)) throw clientError(message);
       request.log.warn({ err: error }, 'Image proxy failed');
       throw clientError('无法连接图像服务', 502);
+    }
+  });
+
+  app.post<{ Body: PromptEnhanceInput }>('/api/prompts/enhance', async (request, reply) => {
+    const body = request.body;
+    if (!body || typeof body !== 'object') throw clientError('请求内容无效');
+    try {
+      const result = await proxyPromptEnhancement(body, {
+        fetchImpl: deps.fetchImpl,
+        timeoutMs: deps.llmTimeoutMs,
+      });
+      return reply.code(result.status).type(result.contentType).send(result.body);
+    } catch (error) {
+      const message = error instanceof Error ? error.message : '提示词生成失败';
+      if (error instanceof Error && error.name === 'AbortError') throw clientError('LLM 服务请求超时', 504);
+      if (/Base URL|API Key|提示词长度|模型名称/.test(message)) throw clientError(message);
+      request.log.warn({ err: error }, 'LLM proxy failed');
+      throw clientError(message === 'LLM 服务未返回提示词' ? message : '无法连接 LLM 服务', 502);
     }
   });
 

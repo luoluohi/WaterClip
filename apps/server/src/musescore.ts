@@ -1,4 +1,4 @@
-import { access, mkdtemp, readFile, rm, writeFile } from 'node:fs/promises';
+import { access, mkdtemp, readFile, rm, unlink, writeFile } from 'node:fs/promises';
 import { constants } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { basename, extname, isAbsolute, join } from 'node:path';
@@ -106,6 +106,23 @@ export interface ConvertInput {
   filename: string;
   museScorePath: string;
   timeoutMs?: number;
+  /** 测试用进程边界；生产环境默认调用 execFile。 */
+  execImpl?: typeof execFileAsync;
+}
+
+export type ScoreConversionFailure = 'invalid-output' | 'process-failed' | 'timeout';
+
+export class ScoreConversionError extends Error {
+  constructor(public readonly reason: ScoreConversionFailure, options?: ErrorOptions) {
+    super(`MuseScore conversion ${reason}`, options);
+    this.name = 'ScoreConversionError';
+  }
+}
+
+export function isMusicXmlBuffer(bytes: Buffer): boolean {
+  if (!bytes.length || bytes.length > 100 * 1024 * 1024) return false;
+  const head = bytes.subarray(0, Math.min(bytes.length, 8_192)).toString('utf8').replace(/^\uFEFF/, '').trimStart();
+  return /^(?:<\?xml[\s\S]*?\?>\s*)?(?:<!DOCTYPE[\s\S]*?>\s*)?<score-(?:partwise|timewise)\b/i.test(head);
 }
 
 export async function convertMsczToMusicXml({
@@ -113,6 +130,7 @@ export async function convertMsczToMusicXml({
   filename,
   museScorePath,
   timeoutMs = 30_000,
+  execImpl = execFileAsync,
 }: ConvertInput): Promise<Buffer> {
   const workspace = await mkdtemp(join(tmpdir(), 'waterclip-score-'));
   const safeStem = basename(filename, extname(filename)).replace(/[^a-zA-Z0-9_-]/g, '_').slice(0, 48) || 'score';
@@ -121,13 +139,32 @@ export async function convertMsczToMusicXml({
 
   try {
     await writeFile(inputPath, bytes, { flag: 'wx' });
-    await execFileAsync(museScorePath, [inputPath, '-o', outputPath], {
-      cwd: workspace,
-      timeout: timeoutMs,
-      maxBuffer: 1024 * 1024,
-      windowsHide: true,
-    });
-    return await readFile(outputPath);
+    let lastError: unknown;
+    for (let attempt = 0; attempt < 2; attempt += 1) {
+      if (attempt > 0) await unlink(outputPath).catch(() => undefined);
+      try {
+        await execImpl(museScorePath, [inputPath, '-o', outputPath], {
+          cwd: workspace,
+          timeout: timeoutMs,
+          maxBuffer: 1024 * 1024,
+          windowsHide: true,
+        });
+      } catch (error) {
+        lastError = error;
+      }
+
+      // MuseScore on Windows can exit non-zero after successfully flushing the
+      // document (for example when its audio/GUI teardown fails). The artifact,
+      // not the process exit code, is the authoritative conversion result.
+      const output = await readFile(outputPath).catch(() => null);
+      if (output && isMusicXmlBuffer(output)) return output;
+    }
+    const processError = lastError as { killed?: boolean; code?: unknown } | undefined;
+    if (processError?.killed || processError?.code === 'ETIMEDOUT') {
+      throw new ScoreConversionError('timeout', { cause: lastError });
+    }
+    if (lastError) throw new ScoreConversionError('process-failed', { cause: lastError });
+    throw new ScoreConversionError('invalid-output');
   } finally {
     await rm(workspace, { recursive: true, force: true });
   }
