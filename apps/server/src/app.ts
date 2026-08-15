@@ -7,6 +7,7 @@ import { existsSync } from 'node:fs';
 import { convertMsczToMusicXml, detectMuseScore, ScoreConversionError, type MuseScoreInfo } from './musescore.js';
 import { proxyImageGeneration, type ImageGenerateInput } from './image-proxy.js';
 import { proxyPromptEnhancement, type PromptEnhanceInput } from './llm-proxy.js';
+import { exportAnnotatedScorePdf, ScorePdfError, type PdfScorePart, type PdfShotAnnotation } from './score-pdf.js';
 
 const MAX_SCORE_BYTES = 50 * 1024 * 1024;
 const PASSTHROUGH_EXTENSIONS = new Set(['.musicxml', '.xml', '.mxl']);
@@ -17,6 +18,7 @@ export interface AppDependencies {
   fetchImpl?: typeof fetch;
   imageTimeoutMs?: number;
   llmTimeoutMs?: number;
+  exportScorePdf?: typeof exportAnnotatedScorePdf;
   staticRoot?: string;
 }
 
@@ -36,7 +38,7 @@ export async function buildApp(deps: AppDependencies = {}): Promise<FastifyInsta
   const app = Fastify({ logger: false, bodyLimit: MAX_SCORE_BYTES + 1024 * 1024 });
   await app.register(cors, { origin: true });
   await app.register(multipart, {
-    limits: { files: 1, fileSize: MAX_SCORE_BYTES, fields: 4 },
+    limits: { files: 1, fileSize: MAX_SCORE_BYTES, fields: 4, fieldSize: 2 * 1024 * 1024 },
   });
 
   app.get<{ Querystring: { museScorePath?: string } }>('/api/health', async (request) => {
@@ -110,6 +112,50 @@ export async function buildApp(deps: AppDependencies = {}): Promise<FastifyInsta
       if (/Base URL|API Key|提示词|参考图/.test(message)) throw clientError(message);
       request.log.warn({ err: error }, 'Image proxy failed');
       throw clientError('无法连接图像服务', 502);
+    }
+  });
+
+  app.post<{ Querystring: { museScorePath?: string } }>('/api/scores/export-pdf', async (request, reply) => {
+    const part = await request.file();
+    if (!part) throw clientError('请选择乐谱文件');
+    let bytes: Buffer;
+    try {
+      bytes = await part.toBuffer();
+    } catch {
+      throw clientError('乐谱文件不能超过 50 MB', 413);
+    }
+    const fieldValue = (name: string): string => {
+      const field = part.fields[name] as { value?: unknown } | undefined;
+      if (!field || typeof field.value !== 'string') throw clientError(`缺少 ${name} 数据`);
+      return field.value;
+    };
+    let parts: PdfScorePart[];
+    let annotations: PdfShotAnnotation[];
+    try {
+      parts = JSON.parse(fieldValue('parts')) as PdfScorePart[];
+      annotations = JSON.parse(fieldValue('annotations')) as PdfShotAnnotation[];
+      if (!Array.isArray(parts) || !Array.isArray(annotations)) throw new Error('invalid');
+    } catch (error) {
+      if (error && typeof error === 'object' && 'statusCode' in error) throw error;
+      throw clientError('PDF 分镜数据无效');
+    }
+    const preferredPath = requestedMuseScorePath(request.query);
+    const museScore = await (deps.detectMuseScore ?? detectMuseScore)(preferredPath);
+    if (!museScore) throw clientError('未找到有效的 MuseScore Studio 4，请先检查设置中的路径', 503);
+    try {
+      const pdf = await (deps.exportScorePdf ?? exportAnnotatedScorePdf)({
+        bytes, filename: part.filename, museScorePath: museScore.path, parts, annotations,
+      });
+      return reply.type('application/pdf').header('Content-Disposition', 'attachment; filename="waterclip-score.pdf"').send(pdf);
+    } catch (error) {
+      if (error instanceof ScorePdfError) {
+        if (error.reason === 'timeout') throw clientError('MuseScore PDF 导出超时，请稍后重试', 504);
+        if (error.reason === 'invalid-output') throw clientError('MuseScore 未生成有效 PDF，请检查乐谱', 422);
+      }
+      const message = error instanceof Error ? error.message : '';
+      if (/声部数据|分镜标记|小节范围/.test(message)) throw clientError(message);
+      request.log.warn({ err: error }, 'MuseScore PDF export failed');
+      throw clientError('MuseScore PDF 导出进程异常，请稍后重试', 502);
     }
   });
 

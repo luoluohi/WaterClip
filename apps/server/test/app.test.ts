@@ -28,6 +28,18 @@ function multipart(filename: string, contents: string | Buffer) {
   };
 }
 
+function multipartWithFields(filename: string, contents: string | Buffer, fields: Record<string, string>) {
+  const boundary = '----waterclip-pdf-boundary';
+  const chunks: Buffer[] = [];
+  for (const [name, value] of Object.entries(fields)) {
+    chunks.push(Buffer.from(`--${boundary}\r\nContent-Disposition: form-data; name="${name}"\r\n\r\n${value}\r\n`));
+  }
+  chunks.push(Buffer.from(`--${boundary}\r\nContent-Disposition: form-data; name="score"; filename="${filename}"\r\nContent-Type: application/octet-stream\r\n\r\n`));
+  chunks.push(Buffer.from(contents));
+  chunks.push(Buffer.from(`\r\n--${boundary}--\r\n`));
+  return { payload: Buffer.concat(chunks), headers: { 'content-type': `multipart/form-data; boundary=${boundary}` } };
+}
+
 describe('生产静态托管', () => {
   it('直达路由返回 SPA，未知 API 仍返回 404', async () => {
     const root = await mkdtemp(join(tmpdir(), 'waterclip-static-'));
@@ -184,6 +196,34 @@ describe('POST /api/scores/convert', () => {
     const response = await app.inject({ method: 'POST', url: '/api/scores/convert', ...upload });
     expect(response.statusCode).toBe(400);
     expect(response.json().error).toContain('仅支持');
+  });
+});
+
+describe('POST /api/scores/export-pdf', () => {
+  it('把乐谱与独立的声部/分镜数据交给 MuseScore PDF 适配器', async () => {
+    const exportScorePdf = vi.fn(async () => Buffer.from('%PDF-test'));
+    const app = await appFor({
+      detectMuseScore: async () => ({ path: 'C:\\MuseScore4.exe', version: 'MuseScore 4.7.4' }),
+      exportScorePdf,
+    });
+    const parts = [{ id: 'track-0', staffCount: 1 }];
+    const annotations = [{ partId: 'track-0', startMeasure: 2, endMeasure: 3, size: '近景', description: '手部推进' }];
+    const response = await app.inject({
+      method: 'POST', url: '/api/scores/export-pdf',
+      ...multipartWithFields('score.musicxml', '<score-partwise/>', { parts: JSON.stringify(parts), annotations: JSON.stringify(annotations) }),
+    });
+    expect(response.statusCode).toBe(200);
+    expect(response.headers['content-type']).toContain('application/pdf');
+    expect(exportScorePdf).toHaveBeenCalledWith(expect.objectContaining({ parts, annotations, filename: 'score.musicxml' }));
+    expect(response.rawPayload.subarray(0, 5).toString()).toBe('%PDF-');
+  });
+
+  it('拒绝缺失的分镜元数据，不启动导出进程', async () => {
+    const exportScorePdf = vi.fn();
+    const app = await appFor({ exportScorePdf });
+    const response = await app.inject({ method: 'POST', url: '/api/scores/export-pdf', ...multipart('score.musicxml', '<score-partwise/>') });
+    expect(response.statusCode).toBe(400);
+    expect(exportScorePdf).not.toHaveBeenCalled();
   });
 });
 
