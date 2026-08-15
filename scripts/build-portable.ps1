@@ -7,6 +7,20 @@ param(
 )
 
 $ErrorActionPreference = "Stop"
+
+function Get-RemoteFile {
+  param(
+    [Parameter(Mandatory = $true)][string]$Uri,
+    [Parameter(Mandatory = $true)][string]$Destination,
+    [long]$MinimumBytes = 1
+  )
+  $curl = (Get-Command curl.exe -ErrorAction Stop).Source
+  & $curl --location --fail --silent --show-error --max-time 600 --output $Destination $Uri
+  if ($LASTEXITCODE -ne 0) { throw "Download failed: $Uri" }
+  $download = Get-Item -LiteralPath $Destination -ErrorAction Stop
+  if ($download.Length -lt $MinimumBytes) { throw "Downloaded file is incomplete: $Uri" }
+}
+
 $repoRoot = [IO.Path]::GetFullPath((Join-Path $PSScriptRoot ".."))
 if (-not $OutputRoot) { $OutputRoot = Join-Path $repoRoot "release" }
 $outputRootPath = [IO.Path]::GetFullPath($OutputRoot)
@@ -71,13 +85,13 @@ try {
   $museBuild = $Matches.build
   $museTag = "v$museVersion"
 
-  Invoke-WebRequest -UseBasicParsing -Uri "https://raw.githubusercontent.com/musescore/MuseScore/$museTag/LICENSE.txt" -OutFile (Join-Path $licenseDir "MuseScore-GPL-3.0.txt")
+  Get-RemoteFile -Uri "https://raw.githubusercontent.com/musescore/MuseScore/$museTag/LICENSE.txt" -Destination (Join-Path $licenseDir "MuseScore-GPL-3.0.txt") -MinimumBytes 10kb
   Copy-Item -LiteralPath (Join-Path $MuseScoreRoot "sound\MS Basic_License.md") -Destination (Join-Path $licenseDir "MuseScore-MS-Basic-SoundFont.md")
 
   $nodeVersion = (& $NodeExe --version).Trim().TrimStart("v")
-  Invoke-WebRequest -UseBasicParsing -Uri "https://raw.githubusercontent.com/nodejs/node/v$nodeVersion/LICENSE" -OutFile (Join-Path $licenseDir "Node.js-LICENSE.txt")
+  Get-RemoteFile -Uri "https://raw.githubusercontent.com/nodejs/node/v$nodeVersion/LICENSE" -Destination (Join-Path $licenseDir "Node.js-LICENSE.txt") -MinimumBytes 10kb
   if (-not $SkipMuseScoreSourceArchive) {
-    Invoke-WebRequest -UseBasicParsing -Uri "https://github.com/musescore/MuseScore/archive/refs/tags/$museTag.zip" -OutFile (Join-Path $sourceDir "MuseScore-$museVersion-source.zip")
+    Get-RemoteFile -Uri "https://codeload.github.com/musescore/MuseScore/zip/refs/tags/$museTag" -Destination (Join-Path $sourceDir "MuseScore-$museVersion-source.zip") -MinimumBytes 1mb
   }
 
   $notices = @(
