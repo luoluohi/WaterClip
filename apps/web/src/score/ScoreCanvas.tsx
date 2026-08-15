@@ -37,6 +37,7 @@ interface ScoreCanvasProps {
   activeShotCells?: readonly ScoreCellRange[];
   hardwareAcceleration: boolean;
   autoPageTurn: boolean;
+  followPlayback: boolean;
   mutedTracks: ReadonlySet<number>;
   soloTracks: ReadonlySet<number>;
   onToggleTrack(index: number, mode: 'mute' | 'solo'): void;
@@ -54,7 +55,7 @@ interface ScoreMeasureTag { index: number; x: number; top: number }
 interface SelectionHighlight { id: string; x: number; y: number; w: number; h: number }
 
 export const ScoreCanvas = forwardRef<ScoreCanvasHandle, ScoreCanvasProps>(function ScoreCanvas(
-  { data, customSoundFont, selection, activeShotCells = [], hardwareAcceleration, autoPageTurn, mutedTracks, soloTracks, onToggleTrack, levelBus, onParts, onSelection, onPosition, onPlayingChange, onSections, onError },
+  { data, customSoundFont, selection, activeShotCells = [], hardwareAcceleration, autoPageTurn, followPlayback, mutedTracks, soloTracks, onToggleTrack, levelBus, onParts, onSelection, onPosition, onPlayingChange, onSections, onError },
   ref
 ) {
   const hostRef = useRef<HTMLDivElement>(null);
@@ -77,6 +78,8 @@ export const ScoreCanvas = forwardRef<ScoreCanvasHandle, ScoreCanvasProps>(funct
   const lastMeasureRef = useRef(1);
   const autoPageTurnRef = useRef(autoPageTurn);
   autoPageTurnRef.current = autoPageTurn;
+  const followPlaybackRef = useRef(followPlayback);
+  followPlaybackRef.current = followPlayback;
   const [rowTags, setRowTags] = useState<ScoreRowTag[]>([]);
   const [measureTags, setMeasureTags] = useState<ScoreMeasureTag[]>([]);
   const [selectionHighlights, setSelectionHighlights] = useState<SelectionHighlight[]>([]);
@@ -284,6 +287,7 @@ export const ScoreCanvas = forwardRef<ScoreCanvasHandle, ScoreCanvasProps>(funct
         lastMeasureRef.current = measure;
         setCurrentMeasure(measure);
         if (autoPageTurnRef.current) revealMeasure(measure, 'page-turn');
+        else if (followPlaybackRef.current) revealMeasure(measure, 'seek');
       }
       const now = performance.now();
       if (now - lastPositionPublishRef.current >= 100 || args.currentTick === 0 || args.currentTick === args.endTick) {

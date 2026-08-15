@@ -23,6 +23,7 @@
 - `apps/web/src/score`: alphaTab 渲染/播放适配器；像素坐标不得进入持久化领域模型。
 - `apps/web/src/components`: UI 组件；跨区状态通过集中 Store 调用领域函数。
 - `apps/server`: 仅负责 MuseScore 转换、同源静态服务和 GPT Image 代理；不得持久化或记录 API Key。
+- `apps/server/src/score-pdf.ts`: 使用 MuseScore PDF + `.mpos` 作为唯一排版/小节坐标来源，`pdf-lib` 只叠加分镜标记；不得用 alphaTab 屏幕像素推算 PDF 坐标。
 
 ## Commands and verification
 

@@ -1,6 +1,6 @@
 import { beforeEach, describe, expect, it } from 'vitest';
 import type { Project, ScorePart } from '../domain';
-import { sortShotGroupsForStoryboard, useWorkspace } from './workspace';
+import { normalizeSettings, sortShotGroupsForStoryboard, useWorkspace } from './workspace';
 
 const parts: ScorePart[] = [
   { id: 'violin', name: '小提琴', staffIds: ['violin-staff'], playbackTrackIds: [0] },
@@ -116,10 +116,13 @@ describe('workspace store', () => {
 
   it('把 MuseScore 路径与其他本机设置一起持久化', () => {
     useWorkspace.getState().setSettings({
-      baseUrl: 'https://api.example.test/v1',
-      apiKey: 'local-only',
+      imageBaseUrl: 'https://image.example.test/v1',
+      imageApiKey: 'image-only',
+      llmBaseUrl: 'https://llm.example.test/v1',
+      llmApiKey: 'llm-only',
       museScorePath: 'C:\\Program Files\\MuseScore 4\\bin\\MuseScore4.exe',
       autoPageTurn: true,
+      timelineFollow: false,
       llmModel: 'gpt-5-mini',
       hardwareAcceleration: true,
     });
@@ -127,6 +130,21 @@ describe('workspace store', () => {
     expect(JSON.parse(localStorage.getItem('waterclip.settings') ?? '{}')).toMatchObject({
       museScorePath: 'C:\\Program Files\\MuseScore 4\\bin\\MuseScore4.exe',
       autoPageTurn: true,
+      imageApiKey: 'image-only',
+      llmApiKey: 'llm-only',
+      timelineFollow: false,
     });
+  });
+
+  it('迁移旧版共用凭据后保持两套字段互相独立，联动默认开启', () => {
+    const migrated = normalizeSettings({ baseUrl: 'https://legacy.example/v1', apiKey: 'legacy-key' });
+    expect(migrated).toMatchObject({
+      imageBaseUrl: 'https://legacy.example/v1', imageApiKey: 'legacy-key',
+      llmBaseUrl: 'https://legacy.example/v1', llmApiKey: 'legacy-key',
+      timelineFollow: true,
+    });
+    const separated = normalizeSettings({ ...migrated, imageApiKey: 'image', llmApiKey: 'llm' });
+    expect(separated.imageApiKey).toBe('image');
+    expect(separated.llmApiKey).toBe('llm');
   });
 });

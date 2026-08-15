@@ -13,12 +13,46 @@ import {
 import type { ScoreSelection } from '../score/ScoreCanvas';
 
 export interface AppSettings {
-  baseUrl: string;
-  apiKey: string;
+  imageBaseUrl: string;
+  imageApiKey: string;
+  llmBaseUrl: string;
+  llmApiKey: string;
   museScorePath: string;
   autoPageTurn: boolean;
+  timelineFollow: boolean;
   llmModel: string;
   hardwareAcceleration: boolean;
+}
+
+export const DEFAULT_SETTINGS: AppSettings = {
+  imageBaseUrl: 'https://api.openai.com/v1',
+  imageApiKey: '',
+  llmBaseUrl: 'https://api.openai.com/v1',
+  llmApiKey: '',
+  museScorePath: '',
+  autoPageTurn: false,
+  timelineFollow: true,
+  llmModel: 'gpt-5-mini',
+  hardwareAcceleration: true,
+};
+
+/** Migrates the former shared API credentials without keeping a coupled runtime field. */
+export function normalizeSettings(value: unknown): AppSettings {
+  if (!value || typeof value !== 'object') return { ...DEFAULT_SETTINGS };
+  const stored = value as Partial<AppSettings> & { baseUrl?: unknown; apiKey?: unknown };
+  const legacyBaseUrl = typeof stored.baseUrl === 'string' ? stored.baseUrl : DEFAULT_SETTINGS.imageBaseUrl;
+  const legacyApiKey = typeof stored.apiKey === 'string' ? stored.apiKey : '';
+  return {
+    imageBaseUrl: typeof stored.imageBaseUrl === 'string' ? stored.imageBaseUrl : legacyBaseUrl,
+    imageApiKey: typeof stored.imageApiKey === 'string' ? stored.imageApiKey : legacyApiKey,
+    llmBaseUrl: typeof stored.llmBaseUrl === 'string' ? stored.llmBaseUrl : legacyBaseUrl,
+    llmApiKey: typeof stored.llmApiKey === 'string' ? stored.llmApiKey : legacyApiKey,
+    museScorePath: typeof stored.museScorePath === 'string' ? stored.museScorePath : DEFAULT_SETTINGS.museScorePath,
+    autoPageTurn: typeof stored.autoPageTurn === 'boolean' ? stored.autoPageTurn : DEFAULT_SETTINGS.autoPageTurn,
+    timelineFollow: typeof stored.timelineFollow === 'boolean' ? stored.timelineFollow : true,
+    llmModel: typeof stored.llmModel === 'string' ? stored.llmModel : DEFAULT_SETTINGS.llmModel,
+    hardwareAcceleration: typeof stored.hardwareAcceleration === 'boolean' ? stored.hardwareAcceleration : DEFAULT_SETTINGS.hardwareAcceleration,
+  };
 }
 
 interface WorkspaceState {
@@ -101,9 +135,9 @@ const initialProject: Project = {
 function loadSettings(): AppSettings {
   try {
     const value = localStorage.getItem('waterclip.settings');
-    if (value) return { baseUrl: 'https://api.openai.com/v1', apiKey: '', museScorePath: '', autoPageTurn: false, llmModel: 'gpt-5-mini', hardwareAcceleration: true, ...JSON.parse(value) };
+    if (value) return normalizeSettings(JSON.parse(value));
   } catch { /* corrupted settings fall back safely */ }
-  return { baseUrl: 'https://api.openai.com/v1', apiKey: '', museScorePath: '', autoPageTurn: false, llmModel: 'gpt-5-mini', hardwareAcceleration: true };
+  return { ...DEFAULT_SETTINGS };
 }
 
 export const useWorkspace = create<WorkspaceState>((set, get) => ({
