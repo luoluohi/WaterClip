@@ -9,7 +9,7 @@
 - `@fastify/static` 已升级到修复路径穿越问题的 `10.1.3`；ExcelJS 的传递依赖 `uuid` 固定为 `11.1.1`。使用官方 npm registry 执行生产依赖审计为 0 个已知漏洞。
 - 本地服务默认只监听 `127.0.0.1`；未知浏览器 Origin 会在读取上传正文前被拒绝，避免任意网页调用本机转换/代理接口。
 - MuseScore 子进程使用 `execFile` 参数数组、可执行文件名白名单、受控临时目录、大小上限和超时；没有 shell 字符串拼接。
-- npm 包元数据清点未发现缺少 license 字段的依赖；Bravura、Sonivox、MS Basic、Node.js 与 MuseScore 的许可证会随发行物保留。
+- npm 包元数据清点未发现缺少 license 字段的依赖；发布器会聚合生产依赖的包名、版本、SPDX 标识，以及包内许可证文本或 MIT/ISC 标准文本回退，Bravura、Sonivox、MS Basic、Node.js 与 MuseScore 的许可证也会随发行物保留。
 - Windows 便携版不包含 npm、缓存、开发依赖、用户乐谱、项目包、API Key 或浏览器数据，并在归档前执行真实健康检查。`BUILD-INFO.json` 会记录 MuseScore 源码归档是否随包提供。
 - 启动器只在当前用户 `%LOCALAPPDATA%\WaterClip\runtime` 建立版本化目录 junction，解决 MuseScore 在深层中文路径下的 CLI 崩溃；不会复制或修改包内 MuseScore 文件。
 

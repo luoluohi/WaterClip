@@ -98,6 +98,8 @@ try {
 
   $nodeVersion = (& $NodeExe --version).Trim().TrimStart("v")
   Get-RemoteFile -Uri "https://raw.githubusercontent.com/nodejs/node/v$nodeVersion/LICENSE" -Destination (Join-Path $licenseDir "Node.js-LICENSE.txt") -MinimumBytes 10kb
+  & $NodeExe "scripts\generate-third-party-notices.mjs" (Join-Path $licenseDir "NPM-THIRD-PARTY-NOTICES.md")
+  if ($LASTEXITCODE -ne 0) { throw "npm third-party notice generation failed" }
   if (-not $SkipMuseScoreSourceArchive) {
     $sourceArchiveName = "MuseScore-$museVersion-source.zip"
     Get-RemoteFile -Uri "https://codeload.github.com/musescore/MuseScore/zip/refs/tags/$museTag" -Destination (Join-Path $sourceDir $sourceArchiveName) -MinimumBytes 1mb
@@ -125,7 +127,7 @@ try {
     "- MuseScore Studio $museVersion (Build $museBuild): GNU GPL version 3. See licenses/MuseScore-GPL-3.0.txt and corresponding-source/MUSESCORE-SOURCE.txt. Upstream tag: https://github.com/musescore/MuseScore/releases/tag/$museTag",
     "- MuseScore MS Basic SoundFont: MIT plus the attribution requirements in licenses/MuseScore-MS-Basic-SoundFont.md.",
     "- Node.js ${nodeVersion}: see licenses/Node.js-LICENSE.txt.",
-    "- The WaterClip frontend includes alphaTab, React, ExcelJS, Bravura, Sonivox, and other dependencies whose licenses remain in package metadata or bundled asset directories.",
+    "- The WaterClip frontend includes alphaTab, React, ExcelJS, Bravura, Sonivox, and other dependencies. See licenses/NPM-THIRD-PARTY-NOTICES.md and the bundled asset license files.",
     "",
     "WaterClip and MuseScore interact across a command-line and temporary-file boundary as separate programs. Bundling them on one medium does not restrict MuseScore GPLv3 rights. Distributors remain responsible for corresponding-source availability. This is not legal advice."
   )
