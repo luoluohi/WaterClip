@@ -87,8 +87,8 @@ try {
   $head = [Text.Encoding]::UTF8.GetString($bytes, 0, [Math]::Min($bytes.Length, 8192))
   if ($head -notmatch "<score-partwise") { throw "Converted output is not MusicXML" }
 
-  $home = & curl.exe --fail --silent "http://127.0.0.1:$Port/"
-  if ($LASTEXITCODE -ne 0 -or $home -notmatch "<title>WaterClip</title>") { throw "Portable SPA check failed" }
+  $homepageHtml = & curl.exe --fail --silent "http://127.0.0.1:$Port/"
+  if ($LASTEXITCODE -ne 0 -or $homepageHtml -notmatch "<title>WaterClip</title>") { throw "Portable SPA check failed" }
 
   [ordered]@{
     archiveBytes = (Get-Item -LiteralPath $archivePath).Length
