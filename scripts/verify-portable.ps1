@@ -88,7 +88,7 @@ try {
   if ($head -notmatch "<score-partwise") { throw "Converted output is not MusicXML" }
 
   $homepageHtml = & curl.exe --fail --silent "http://127.0.0.1:$Port/"
-  if ($LASTEXITCODE -ne 0 -or $homepageHtml -notmatch "<title>WaterClip</title>") { throw "Portable SPA check failed" }
+  if ($LASTEXITCODE -ne 0 -or $homepageHtml -notmatch '<div id="root"></div>') { throw "Portable SPA check failed" }
 
   [ordered]@{
     archiveBytes = (Get-Item -LiteralPath $archivePath).Length
