@@ -11,6 +11,7 @@
 - MuseScore 子进程使用 `execFile` 参数数组、可执行文件名白名单、受控临时目录、大小上限和超时；没有 shell 字符串拼接。
 - npm 包元数据清点未发现缺少 license 字段的依赖；Bravura、Sonivox、MS Basic、Node.js 与 MuseScore 的许可证会随发行物保留。
 - Windows 便携版不包含 npm、缓存、开发依赖、用户乐谱、项目包、API Key 或浏览器数据，并在归档前执行真实健康检查。`BUILD-INFO.json` 会记录 MuseScore 源码归档是否随包提供。
+- 启动器只在当前用户 `%LOCALAPPDATA%\WaterClip\runtime` 建立版本化目录 junction，解决 MuseScore 在深层中文路径下的 CLI 崩溃；不会复制或修改包内 MuseScore 文件。
 
 可重复执行：
 

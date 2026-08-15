@@ -7,5 +7,8 @@ WaterClip Windows 便携版
 4. 使用 Stop-WaterClip.cmd 结束隐藏运行的本地服务。
 5. 项目与 API Key 保存在当前 Windows 用户的浏览器存储中，不会写入发行目录。
 
+启动器会在 %LOCALAPPDATA%\WaterClip\runtime 下创建一个短路径目录联接，指向包内
+MuseScore。这样即使便携包位于中文或较深目录，MuseScore CLI 也能稳定运行。
+
 请勿删除 app、runtime 或 third_party 目录。公开再分发前请阅读 licenses 目录和
 OPEN-SOURCE-AUDIT.md；MuseScore Studio 4 受 GNU GPLv3 约束。

@@ -44,6 +44,9 @@ npm run build
 npm start
 npm run audit:open-source
 npm run release:portable
+npm run release:verify
 ```
 
 `release:portable` 只在 Windows 发布构建机执行，默认复制 `C:\Program Files\MuseScore 4` 并附带精确版本的 MuseScore GPLv3 对应源码归档。生成物位于被 Git 忽略的 `release/`，不得把本机验收乐谱或 API Key 放入该目录。
+
+MuseScore 4.7.4 从深层中文目录直接运行 CLI 可能抛出 C++ 异常。便携启动器会在 `%LOCALAPPDATA%\WaterClip\runtime\musescore-4.7.4` 创建仅指向包内运行目录的短 ASCII junction；该目录不复制乐谱或用户数据。

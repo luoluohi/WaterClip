@@ -1,6 +1,6 @@
 Option Explicit
 
-Dim shell, fso, root, http, processEnvironment, command
+Dim shell, fso, root, http, processEnvironment, command, prepareCommand, prepareExit
 Set shell = CreateObject("WScript.Shell")
 Set fso = CreateObject("Scripting.FileSystemObject")
 root = fso.GetParentFolderName(WScript.ScriptFullName)
@@ -17,9 +17,16 @@ Err.Clear
 On Error GoTo 0
 
 Set processEnvironment = shell.Environment("Process")
+prepareCommand = "powershell.exe -NoProfile -ExecutionPolicy Bypass -File " & Chr(34) & root & "\Prepare-MuseScore.ps1" & Chr(34) & " -BundleRoot " & Chr(34) & root & Chr(34)
+prepareExit = shell.Run(prepareCommand, 0, True)
+If prepareExit <> 0 Then
+  MsgBox "WaterClip could not prepare the bundled MuseScore runtime. Run WaterClip-console.cmd for details.", 16, "WaterClip"
+  WScript.Quit prepareExit
+End If
+
 processEnvironment("HOST") = "127.0.0.1"
 processEnvironment("PORT") = "4174"
-processEnvironment("MUSESCORE_PATH") = root & "\third_party\MuseScore 4\bin\MuseScore4.exe"
+processEnvironment("MUSESCORE_PATH") = shell.ExpandEnvironmentStrings("%LOCALAPPDATA%") & "\WaterClip\runtime\musescore-4.7.4\bin\MuseScore4.exe"
 processEnvironment("WATERCLIP_STATIC_ROOT") = root & "\app\web"
 processEnvironment("WATERCLIP_PID_FILE") = root & "\runtime\waterclip.pid"
 processEnvironment("WATERCLIP_OPEN_BROWSER") = "1"

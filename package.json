@@ -13,7 +13,8 @@
     "typecheck": "npm run typecheck -w @waterclip/server && npm run typecheck -w @waterclip/web",
     "start": "npm run start -w @waterclip/server",
     "audit:open-source": "node scripts/audit-open-source.mjs",
-    "release:portable": "powershell -NoProfile -ExecutionPolicy Bypass -File scripts/build-portable.ps1"
+    "release:portable": "powershell -NoProfile -ExecutionPolicy Bypass -File scripts/build-portable.ps1",
+    "release:verify": "powershell -NoProfile -ExecutionPolicy Bypass -File scripts/verify-portable.ps1"
   },
   "devDependencies": {
     "concurrently": "^9.2.1"

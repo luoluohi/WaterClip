@@ -59,7 +59,7 @@ try {
   Copy-Item -LiteralPath "apps\server\dist" -Destination $serverDir -Recurse
   Copy-Item -Path "apps\web\dist\*" -Destination $webDir -Recurse
   Copy-Item -LiteralPath $NodeExe -Destination (Join-Path $runtimeDir "node.exe")
-  Copy-Item -LiteralPath "packaging\windows\WaterClip.vbs", "packaging\windows\WaterClip-console.cmd", "packaging\windows\Stop-WaterClip.cmd", "packaging\windows\README.txt" -Destination $packageDir
+  Copy-Item -LiteralPath "packaging\windows\WaterClip.vbs", "packaging\windows\WaterClip-console.cmd", "packaging\windows\Stop-WaterClip.cmd", "packaging\windows\Prepare-MuseScore.ps1", "packaging\windows\README.txt" -Destination $packageDir
   Copy-Item -LiteralPath "docs\OPEN_SOURCE_AUDIT.md" -Destination (Join-Path $packageDir "OPEN-SOURCE-AUDIT.md")
   Copy-Item -LiteralPath "SECURITY.md" -Destination $packageDir
 
@@ -88,6 +88,10 @@ try {
   $museVersion = $Matches.version
   $museBuild = $Matches.build
   $museTag = "v$museVersion"
+  $preparedMuseScore = (& powershell.exe -NoProfile -ExecutionPolicy Bypass -File (Join-Path $packageDir "Prepare-MuseScore.ps1") -BundleRoot $packageDir | Select-Object -Last 1).Trim()
+  if ($LASTEXITCODE -ne 0 -or -not (Test-Path -LiteralPath $preparedMuseScore)) {
+    throw "Unable to prepare the short MuseScore runtime path"
+  }
 
   Get-RemoteFile -Uri "https://raw.githubusercontent.com/musescore/MuseScore/$museTag/LICENSE.txt" -Destination (Join-Path $licenseDir "MuseScore-GPL-3.0.txt") -MinimumBytes 10kb
   Copy-Item -LiteralPath (Join-Path $MuseScoreRoot "sound\MS Basic_License.md") -Destination (Join-Path $licenseDir "MuseScore-MS-Basic-SoundFont.md")
@@ -158,7 +162,7 @@ try {
   try {
     $env:HOST = "127.0.0.1"
     $env:PORT = "4174"
-    $env:MUSESCORE_PATH = $bundledMuseScore
+    $env:MUSESCORE_PATH = $preparedMuseScore
     $env:WATERCLIP_STATIC_ROOT = $webDir
     $env:WATERCLIP_PID_FILE = Join-Path $stagingRoot "waterclip.pid"
     $env:WATERCLIP_OPEN_BROWSER = "0"
