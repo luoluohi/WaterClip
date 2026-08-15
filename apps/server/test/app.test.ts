@@ -57,6 +57,35 @@ describe('生产静态托管', () => {
   });
 });
 
+describe('本地服务来源边界', () => {
+  it('拒绝第三方网页跨站调用本地 API', async () => {
+    const app = await appFor();
+    const response = await app.inject({
+      method: 'GET',
+      url: '/api/health',
+      headers: { host: '127.0.0.1:4174', origin: 'https://malicious.example' },
+    });
+    expect(response.statusCode).toBe(403);
+    expect(response.json().error).toContain('未知来源');
+  });
+
+  it('允许同源页面和显式开发来源访问', async () => {
+    const app = await appFor({ allowedOrigins: ['http://localhost:5173'] });
+    const sameOrigin = await app.inject({
+      method: 'GET',
+      url: '/api/health',
+      headers: { host: '127.0.0.1:4174', origin: 'http://127.0.0.1:4174' },
+    });
+    const development = await app.inject({
+      method: 'GET',
+      url: '/api/health',
+      headers: { host: '127.0.0.1:4174', origin: 'http://localhost:5173' },
+    });
+    expect(sameOrigin.statusCode).toBe(200);
+    expect(development.statusCode).toBe(200);
+  });
+});
+
 describe('GET /api/health', () => {
   it('报告 MuseScore 的转换能力', async () => {
     const app = await appFor({

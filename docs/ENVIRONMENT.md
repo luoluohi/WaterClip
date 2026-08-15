@@ -42,4 +42,8 @@ npm test
 npm run typecheck
 npm run build
 npm start
+npm run audit:open-source
+npm run release:portable
 ```
+
+`release:portable` 只在 Windows 发布构建机执行，默认复制 `C:\Program Files\MuseScore 4` 并附带精确版本的 MuseScore GPLv3 对应源码归档。生成物位于被 Git 忽略的 `release/`，不得把本机验收乐谱或 API Key 放入该目录。

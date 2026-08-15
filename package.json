@@ -3,16 +3,27 @@
   "version": "0.1.0",
   "private": true,
   "type": "module",
-  "workspaces": ["apps/*"],
+  "workspaces": [
+    "apps/*"
+  ],
   "scripts": {
     "dev": "concurrently -k -n SERVER,WEB -c yellow,cyan \"npm run dev -w @waterclip/server\" \"npm run dev -w @waterclip/web\"",
     "build": "npm run build -w @waterclip/server && npm run build -w @waterclip/web",
     "test": "npm run test -w @waterclip/server && npm run test -w @waterclip/web",
     "typecheck": "npm run typecheck -w @waterclip/server && npm run typecheck -w @waterclip/web",
-    "start": "npm run start -w @waterclip/server"
+    "start": "npm run start -w @waterclip/server",
+    "audit:open-source": "node scripts/audit-open-source.mjs",
+    "release:portable": "powershell -NoProfile -ExecutionPolicy Bypass -File scripts/build-portable.ps1"
   },
   "devDependencies": {
     "concurrently": "^9.2.1"
   },
-  "engines": { "node": ">=22" }
+  "engines": {
+    "node": ">=22"
+  },
+  "overrides": {
+    "exceljs": {
+      "uuid": "11.1.1"
+    }
+  }
 }

@@ -17,3 +17,5 @@ apps/web/vite.config.d.ts
 apps/server/tmp/
 playwright-report/
 test-results/
+release/
+.release-staging/

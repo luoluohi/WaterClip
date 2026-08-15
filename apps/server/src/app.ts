@@ -1,6 +1,5 @@
 import Fastify, { type FastifyInstance } from 'fastify';
 import multipart from '@fastify/multipart';
-import cors from '@fastify/cors';
 import staticPlugin from '@fastify/static';
 import { extname } from 'node:path';
 import { existsSync } from 'node:fs';
@@ -20,6 +19,8 @@ export interface AppDependencies {
   llmTimeoutMs?: number;
   exportScorePdf?: typeof exportAnnotatedScorePdf;
   staticRoot?: string;
+  /** Additional browser origins accepted during development or embedding. */
+  allowedOrigins?: string[];
 }
 
 function clientError(message: string, statusCode = 400): Error & { statusCode: number } {
@@ -36,7 +37,20 @@ function requestedMuseScorePath(query: unknown): string | undefined {
 
 export async function buildApp(deps: AppDependencies = {}): Promise<FastifyInstance> {
   const app = Fastify({ logger: false, bodyLimit: MAX_SCORE_BYTES + 1024 * 1024 });
-  await app.register(cors, { origin: true });
+  const allowedOrigins = new Set(deps.allowedOrigins ?? []);
+  app.addHook('onRequest', async (request, reply) => {
+    const origin = request.headers.origin;
+    if (!origin) return;
+    let originHost: string;
+    try {
+      originHost = new URL(origin).host;
+    } catch {
+      return reply.code(403).send({ error: '拒绝未知来源的本地服务请求' });
+    }
+    if (originHost !== request.headers.host && !allowedOrigins.has(origin)) {
+      return reply.code(403).send({ error: '拒绝未知来源的本地服务请求' });
+    }
+  });
   await app.register(multipart, {
     limits: { files: 1, fileSize: MAX_SCORE_BYTES, fields: 4, fieldSize: 2 * 1024 * 1024 },
   });

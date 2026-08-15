@@ -31,6 +31,8 @@
 - 单元/集成测试：`npm test`
 - 类型检查：`npm run typecheck`
 - 生产构建：`npm run build`
+- 开源审计：`npm run audit:open-source`
+- Windows 便携版：`npm run release:portable`；生成物仅放在被忽略的 `release/`，不得提交打包的 Node/MuseScore 二进制。
 - 功能变更必须增加有意义测试；UI 改动完成后至少检查 1440px、1280px 和窄屏布局。
 
 ## Git and plans
