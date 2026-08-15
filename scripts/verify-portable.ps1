@@ -87,7 +87,7 @@ try {
   $head = [Text.Encoding]::UTF8.GetString($bytes, 0, [Math]::Min($bytes.Length, 8192))
   if ($head -notmatch "<score-partwise") { throw "Converted output is not MusicXML" }
 
-  $homepageHtml = & curl.exe --fail --silent "http://127.0.0.1:$Port/"
+  $homepageHtml = (& curl.exe --fail --silent "http://127.0.0.1:$Port/" | Out-String)
   if ($LASTEXITCODE -ne 0 -or $homepageHtml -notmatch '<div id="root"></div>') { throw "Portable SPA check failed" }
 
   [ordered]@{
