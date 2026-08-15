@@ -15,7 +15,7 @@ function Get-RemoteFile {
     [long]$MinimumBytes = 1
   )
   $curl = (Get-Command curl.exe -ErrorAction Stop).Source
-  & $curl --location --fail --silent --show-error --max-time 3600 --output $Destination $Uri
+  & $curl --location --fail --silent --show-error --retry 5 --retry-delay 2 --retry-all-errors --max-time 3600 --output $Destination $Uri
   if ($LASTEXITCODE -ne 0) { throw "Download failed: $Uri" }
   $download = Get-Item -LiteralPath $Destination -ErrorAction Stop
   if ($download.Length -lt $MinimumBytes) { throw "Downloaded file is incomplete: $Uri" }
