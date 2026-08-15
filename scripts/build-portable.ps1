@@ -77,6 +77,10 @@ try {
 
   Copy-Item -LiteralPath $MuseScoreRoot -Destination (Join-Path $thirdPartyDir "MuseScore 4") -Recurse
   $bundledMuseScore = Join-Path $packageDir "third_party\MuseScore 4\bin\MuseScore4.exe"
+  $bundledAutomationAssets = Join-Path $packageDir "third_party\MuseScore 4\autobotscripts"
+  if (Test-Path -LiteralPath $bundledAutomationAssets) {
+    Remove-Item -LiteralPath $bundledAutomationAssets -Recurse -Force
+  }
   $museVersionText = (& $bundledMuseScore --long-version 2>&1 | Out-String).Trim()
   if ($museVersionText -notmatch "Version\s+(?<version>4\.\d+\.\d+).*Build\s+(?<build>[0-9a-f]+)") {
     throw "Unable to verify bundled MuseScore version: $museVersionText"
