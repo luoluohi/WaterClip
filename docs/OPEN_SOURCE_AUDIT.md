@@ -10,7 +10,7 @@
 - 本地服务默认只监听 `127.0.0.1`；未知浏览器 Origin 会在读取上传正文前被拒绝，避免任意网页调用本机转换/代理接口。
 - MuseScore 子进程使用 `execFile` 参数数组、可执行文件名白名单、受控临时目录、大小上限和超时；没有 shell 字符串拼接。
 - npm 包元数据清点未发现缺少 license 字段的依赖；Bravura、Sonivox、MS Basic、Node.js 与 MuseScore 的许可证会随发行物保留。
-- Windows 便携版不包含 npm、缓存、开发依赖、用户乐谱、项目包、API Key 或浏览器数据，并在归档前执行真实健康检查。
+- Windows 便携版不包含 npm、缓存、开发依赖、用户乐谱、项目包、API Key 或浏览器数据，并在归档前执行真实健康检查。`BUILD-INFO.json` 会记录 MuseScore 源码归档是否随包提供。
 
 可重复执行：
 
@@ -28,6 +28,7 @@ npm run build
 - 用户选择“记住 API Key”时，密钥会明文保存在该浏览器配置中。项目包、XLSX、PDF 和服务日志不包含密钥。
 - 发行物尚未进行 Authenticode 签名，Windows SmartScreen 可能显示未知发布者。
 - 便携版约含 432 MB MuseScore 运行目录、Node 运行时和 Web 资源，体积显著大于 MusicXML-only 构建。
+- GitHub codeload 不支持断点续传；`-SkipMuseScoreSourceArchive` 仅供网络受限的内部候选包使用。该候选包必须在源码等价可得后才能公开分发。
 
 ## 公开发布前仍需版权所有者决定
 

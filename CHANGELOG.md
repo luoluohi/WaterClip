@@ -2,7 +2,7 @@
 
 ## 2026-08-15（便携版与开源准备）
 
-- 新增免 npm 的 Windows 便携版构建：内含 Node.js 运行时、生产前后端、MuseScore Studio 4 CLI、第三方许可、对应源码、构建清单和 SHA-256，并执行真实启动健康检查。
+- 新增免 npm 的 Windows 便携版构建：内含 Node.js 运行时、生产前后端、MuseScore Studio 4 CLI、第三方许可、源码可得性说明、构建清单和 SHA-256，并执行真实启动健康检查；公开包默认下载对应源码，内部候选可显式跳过但不得直接分发。
 - 升级 `@fastify/static` 以修复路径穿越公告，将 ExcelJS 的 `uuid` 传递依赖提升到安全版本；官方 npm registry 生产依赖审计归零。
 - 移除任意 Origin CORS，未知网页来源无法调用本机转换与代理 API；补充开源审计、安全策略、贡献指南和 MuseScore 替代/许可研究。
 

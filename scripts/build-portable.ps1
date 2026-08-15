@@ -15,12 +15,8 @@ function Get-RemoteFile {
     [long]$MinimumBytes = 1
   )
   $curl = (Get-Command curl.exe -ErrorAction Stop).Source
-  for ($attempt = 1; $attempt -le 6; $attempt += 1) {
-    & $curl --location --fail --silent --show-error --continue-at - --max-time 600 --output $Destination $Uri
-    if ($LASTEXITCODE -eq 0) { break }
-    if ($attempt -eq 6) { throw "Download failed after resumable retries: $Uri" }
-    Write-Host "Download interrupted; resuming attempt $($attempt + 1)/6: $Uri"
-  }
+  & $curl --location --fail --silent --show-error --max-time 3600 --output $Destination $Uri
+  if ($LASTEXITCODE -ne 0) { throw "Download failed: $Uri" }
   $download = Get-Item -LiteralPath $Destination -ErrorAction Stop
   if ($download.Length -lt $MinimumBytes) { throw "Downloaded file is incomplete: $Uri" }
 }
@@ -32,7 +28,6 @@ $packageName = "WaterClip-0.1.0-win-x64-portable"
 $packageDir = [IO.Path]::GetFullPath((Join-Path $outputRootPath $packageName))
 $archivePath = [IO.Path]::GetFullPath((Join-Path $outputRootPath "$packageName.zip"))
 $stagingRoot = [IO.Path]::GetFullPath((Join-Path $repoRoot ".release-staging"))
-$cacheRoot = [IO.Path]::GetFullPath((Join-Path $repoRoot ".release-cache"))
 
 if ($packageDir -eq $outputRootPath -or -not $packageDir.StartsWith($outputRootPath + [IO.Path]::DirectorySeparatorChar, [StringComparison]::OrdinalIgnoreCase)) {
   throw "Unsafe release directory: $packageDir"
@@ -46,7 +41,7 @@ if (-not (Test-Path -LiteralPath $NodeExe)) { throw "Node.js runtime not found: 
 New-Item -ItemType Directory -Path $outputRootPath -Force | Out-Null
 if (Test-Path -LiteralPath $packageDir) { Remove-Item -LiteralPath $packageDir -Recurse -Force }
 if (Test-Path -LiteralPath $stagingRoot) { Remove-Item -LiteralPath $stagingRoot -Recurse -Force }
-New-Item -ItemType Directory -Path $packageDir, $stagingRoot, $cacheRoot -Force | Out-Null
+New-Item -ItemType Directory -Path $packageDir, $stagingRoot -Force | Out-Null
 
 Push-Location $repoRoot
 try {
@@ -97,15 +92,29 @@ try {
   Get-RemoteFile -Uri "https://raw.githubusercontent.com/nodejs/node/v$nodeVersion/LICENSE" -Destination (Join-Path $licenseDir "Node.js-LICENSE.txt") -MinimumBytes 10kb
   if (-not $SkipMuseScoreSourceArchive) {
     $sourceArchiveName = "MuseScore-$museVersion-source.zip"
-    $sourceCache = Join-Path $cacheRoot $sourceArchiveName
-    Get-RemoteFile -Uri "https://codeload.github.com/musescore/MuseScore/zip/refs/tags/$museTag" -Destination $sourceCache -MinimumBytes 1mb
-    Copy-Item -LiteralPath $sourceCache -Destination (Join-Path $sourceDir $sourceArchiveName)
+    Get-RemoteFile -Uri "https://codeload.github.com/musescore/MuseScore/zip/refs/tags/$museTag" -Destination (Join-Path $sourceDir $sourceArchiveName) -MinimumBytes 1mb
   }
+
+  $sourceStatus = if ($SkipMuseScoreSourceArchive) {
+    "The source archive is not bundled in this internal candidate. Do not publicly redistribute this binary until equivalent access to the exact corresponding source is provided beside the download."
+  } else {
+    "The main-repository source archive is bundled at corresponding-source/MuseScore-$museVersion-source.zip. Public distributors must also verify required submodule and third-party source availability."
+  }
+  @(
+    "MuseScore Studio source availability",
+    "Version: $museVersion",
+    "Build commit: $museBuild",
+    "Tag: https://github.com/musescore/MuseScore/releases/tag/$museTag",
+    "Source: https://github.com/musescore/MuseScore/tree/$museTag",
+    "Archive: https://codeload.github.com/musescore/MuseScore/zip/refs/tags/$museTag",
+    "",
+    $sourceStatus
+  ) | Set-Content -LiteralPath (Join-Path $sourceDir "MUSESCORE-SOURCE.txt") -Encoding utf8
 
   $notices = @(
     "# Third-party components and source code",
     "",
-    "- MuseScore Studio $museVersion (Build $museBuild): GNU GPL version 3. See licenses/MuseScore-GPL-3.0.txt and corresponding-source/MuseScore-$museVersion-source.zip. Upstream tag: https://github.com/musescore/MuseScore/releases/tag/$museTag",
+    "- MuseScore Studio $museVersion (Build $museBuild): GNU GPL version 3. See licenses/MuseScore-GPL-3.0.txt and corresponding-source/MUSESCORE-SOURCE.txt. Upstream tag: https://github.com/musescore/MuseScore/releases/tag/$museTag",
     "- MuseScore MS Basic SoundFont: MIT plus the attribution requirements in licenses/MuseScore-MS-Basic-SoundFont.md.",
     "- Node.js ${nodeVersion}: see licenses/Node.js-LICENSE.txt.",
     "- The WaterClip frontend includes alphaTab, React, ExcelJS, Bravura, Sonivox, and other dependencies whose licenses remain in package metadata or bundled asset directories.",
@@ -126,6 +135,7 @@ try {
     nodeVersion = $nodeVersion
     museScoreVersion = $museVersion
     museScoreBuild = $museBuild
+    museScoreSourceArchiveBundled = -not [bool]$SkipMuseScoreSourceArchive
     nodeSha256 = (Get-FileHash -Algorithm SHA256 -LiteralPath (Join-Path $runtimeDir "node.exe")).Hash.ToLowerInvariant()
     museScoreSha256 = (Get-FileHash -Algorithm SHA256 -LiteralPath $bundledMuseScore).Hash.ToLowerInvariant()
   }

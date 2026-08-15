@@ -63,6 +63,8 @@ npm run release:portable
 
 生成的 `release/WaterClip-0.1.0-win-x64-portable.zip` 已包含 Node.js 运行时、生产服务、构建后的前端和完整 MuseScore CLI 运行目录；最终用户无需安装 Node.js、npm 或 MuseScore。解压后双击 `WaterClip.vbs`，需要排错时使用 `WaterClip-console.cmd`。
 
+默认构建会下载并附带 MuseScore 标签源码；网络受限的内部验收可直接运行 `scripts/build-portable.ps1 -SkipMuseScoreSourceArchive`。使用该开关生成的候选包不得直接公开分发，必须先在二进制下载处提供精确版本的对应源码。
+
 替代后端和 GPLv3 再分发结论见 [MuseScore CLI 替代方案](docs/MUSESCORE_ALTERNATIVES.md)，审计与公开发布剩余事项见 [开源前审计](docs/OPEN_SOURCE_AUDIT.md)。WaterClip 自身的开源许可证仍须由版权所有者选择；在根许可证提交前，本仓库不能宣称已经开源。
 
 PDF 导出由 MuseScore 同源生成矢量 PDF 和 `.mpos` 小节坐标，再由服务端使用 `pdf-lib` 叠加声部标记。服务只使用受控临时目录，完成后立即清理乐谱与中间产物。

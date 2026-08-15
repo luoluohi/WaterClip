@@ -19,4 +19,3 @@ playwright-report/
 test-results/
 release/
 .release-staging/
-.release-cache/
