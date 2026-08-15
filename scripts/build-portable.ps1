@@ -15,8 +15,12 @@ function Get-RemoteFile {
     [long]$MinimumBytes = 1
   )
   $curl = (Get-Command curl.exe -ErrorAction Stop).Source
-  & $curl --location --fail --silent --show-error --max-time 600 --output $Destination $Uri
-  if ($LASTEXITCODE -ne 0) { throw "Download failed: $Uri" }
+  for ($attempt = 1; $attempt -le 6; $attempt += 1) {
+    & $curl --location --fail --silent --show-error --continue-at - --max-time 600 --output $Destination $Uri
+    if ($LASTEXITCODE -eq 0) { break }
+    if ($attempt -eq 6) { throw "Download failed after resumable retries: $Uri" }
+    Write-Host "Download interrupted; resuming attempt $($attempt + 1)/6: $Uri"
+  }
   $download = Get-Item -LiteralPath $Destination -ErrorAction Stop
   if ($download.Length -lt $MinimumBytes) { throw "Downloaded file is incomplete: $Uri" }
 }
@@ -28,6 +32,7 @@ $packageName = "WaterClip-0.1.0-win-x64-portable"
 $packageDir = [IO.Path]::GetFullPath((Join-Path $outputRootPath $packageName))
 $archivePath = [IO.Path]::GetFullPath((Join-Path $outputRootPath "$packageName.zip"))
 $stagingRoot = [IO.Path]::GetFullPath((Join-Path $repoRoot ".release-staging"))
+$cacheRoot = [IO.Path]::GetFullPath((Join-Path $repoRoot ".release-cache"))
 
 if ($packageDir -eq $outputRootPath -or -not $packageDir.StartsWith($outputRootPath + [IO.Path]::DirectorySeparatorChar, [StringComparison]::OrdinalIgnoreCase)) {
   throw "Unsafe release directory: $packageDir"
@@ -41,7 +46,7 @@ if (-not (Test-Path -LiteralPath $NodeExe)) { throw "Node.js runtime not found: 
 New-Item -ItemType Directory -Path $outputRootPath -Force | Out-Null
 if (Test-Path -LiteralPath $packageDir) { Remove-Item -LiteralPath $packageDir -Recurse -Force }
 if (Test-Path -LiteralPath $stagingRoot) { Remove-Item -LiteralPath $stagingRoot -Recurse -Force }
-New-Item -ItemType Directory -Path $packageDir, $stagingRoot -Force | Out-Null
+New-Item -ItemType Directory -Path $packageDir, $stagingRoot, $cacheRoot -Force | Out-Null
 
 Push-Location $repoRoot
 try {
@@ -91,7 +96,10 @@ try {
   $nodeVersion = (& $NodeExe --version).Trim().TrimStart("v")
   Get-RemoteFile -Uri "https://raw.githubusercontent.com/nodejs/node/v$nodeVersion/LICENSE" -Destination (Join-Path $licenseDir "Node.js-LICENSE.txt") -MinimumBytes 10kb
   if (-not $SkipMuseScoreSourceArchive) {
-    Get-RemoteFile -Uri "https://codeload.github.com/musescore/MuseScore/zip/refs/tags/$museTag" -Destination (Join-Path $sourceDir "MuseScore-$museVersion-source.zip") -MinimumBytes 1mb
+    $sourceArchiveName = "MuseScore-$museVersion-source.zip"
+    $sourceCache = Join-Path $cacheRoot $sourceArchiveName
+    Get-RemoteFile -Uri "https://codeload.github.com/musescore/MuseScore/zip/refs/tags/$museTag" -Destination $sourceCache -MinimumBytes 1mb
+    Copy-Item -LiteralPath $sourceCache -Destination (Join-Path $sourceDir $sourceArchiveName)
   }
 
   $notices = @(
