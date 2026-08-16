@@ -1,5 +1,5 @@
 import { execFileSync } from 'node:child_process';
-import { readFileSync, statSync } from 'node:fs';
+import { existsSync, readFileSync, statSync } from 'node:fs';
 import { basename, extname, resolve } from 'node:path';
 
 const root = resolve(import.meta.dirname, '..');
@@ -20,6 +20,7 @@ const obviousTestValue = /^(?:test|example|dummy|fake|bad|secret|never|llm-secre
 const secretFindings = [];
 for (const file of tracked) {
   const path = resolve(root, file);
+  if (!existsSync(path)) continue;
   const size = statSync(path).size;
   if (size > 2 * 1024 * 1024) continue;
   const bytes = readFileSync(path);

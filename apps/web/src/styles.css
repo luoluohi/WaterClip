@@ -37,7 +37,10 @@ button:focus-visible, input:focus-visible, textarea:focus-visible, select:focus-
 .brand-mark { width: 34px; height: 34px; display: grid; place-items: center; color: var(--paper); background: var(--cue); border-radius: 50% 50% 47% 53%; box-shadow: inset 0 0 0 1px #ffb4a34d; }
 .brand strong { display: block; font-size: 17px; letter-spacing: .04em; }
 .brand small, .project-title small { display: block; font: 500 9px/1.4 'IBM Plex Mono', monospace; letter-spacing: .15em; color: var(--muted); }
-.project-title { display: flex; align-items: center; gap: 8px; font-weight: 600; min-width: 0; }
+.project-title { display: flex; align-items: center; gap: 8px; font-weight: 600; min-width: 0; width: fit-content; max-width: 100%; cursor: text; border: 0; padding: 0; background: transparent; text-align: left; }
+.project-title:focus-visible { outline: 2px solid var(--focus); outline-offset: 4px; }
+.project-title.is-renaming { width: min(520px, 100%); }
+.project-name-input { min-width: 120px; width: min(360px, 45vw); height: 32px; padding: 4px 8px; border: 1px solid #657781; border-radius: 4px; background: #18242c; color: #fff; font-weight: 600; }
 .project-title small { margin-left: 7px; letter-spacing: .05em; }
 .status-dot { width: 7px; height: 7px; border-radius: 50%; background: var(--brass); box-shadow: 0 0 0 4px #c4a35a19; }
 .top-actions { display: flex; align-items: center; gap: 7px; }
@@ -98,6 +101,13 @@ button:focus-visible, input:focus-visible, textarea:focus-visible, select:focus-
 .reference-row { display: flex; align-items: center; flex-wrap: wrap; gap: 7px; color: #92a2a9; }
 .reference-upload, .reference-row button { display: inline-flex; align-items: center; gap: 5px; padding: 4px 6px; border: 1px solid #4c5e68; background: transparent; color: #bec9cd; border-radius: 3px; font-size: 9px; cursor: pointer; }
 .reference-row small { flex-basis: 100%; font-size: 9px; }
+.apply-scope-row { min-height: 24px; display: flex; align-items: center; gap: 10px; margin: -2px 0 8px; color: #a9b7bc; font-size: 9px; }
+.apply-scope-row > span { margin-right: auto; color: #7f929a; }
+.apply-scope-option { display: inline-flex; align-items: center; gap: 4px; cursor: pointer; white-space: nowrap; }
+.apply-scope-option input { width: 13px; height: 13px; margin: 0; accent-color: var(--brass); }
+.apply-scope-row button { padding: 4px 7px; border: 1px solid #4c5e68; border-radius: 3px; background: transparent; color: #bec9cd; font-size: 9px; cursor: pointer; }
+.apply-scope-row button:disabled { opacity: .4; cursor: not-allowed; }
+.version-label { align-self: center; margin-right: auto; color: #81939b; font: 500 9px 'IBM Plex Mono', monospace; }
 .prompt-button { width: 100%; margin: -2px 0 8px; padding: 6px; display: flex; align-items: center; justify-content: center; gap: 5px; border: 1px dashed #667983; border-radius: 3px; background: transparent; color: #b6c5ca; font-size: 9px; cursor: pointer; }
 .generate-button { width: 100%; margin-top: 9px; padding: 8px; display: flex; align-items: center; justify-content: center; gap: 6px; border: 1px solid #ad8060; border-radius: 4px; background: #4a4038; color: #f1d1b7; font-size: 11px; cursor: pointer; }
 .generate-button:disabled { opacity: .45; cursor: not-allowed; }

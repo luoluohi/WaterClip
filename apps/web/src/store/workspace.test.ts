@@ -114,13 +114,12 @@ describe('workspace store', () => {
     expect(useWorkspace.getState().history.future).toEqual([]);
   });
 
-  it('把 MuseScore 路径与其他本机设置一起持久化', () => {
+  it('只持久化应用设置，不再接受 MuseScore 本机路径', () => {
     useWorkspace.getState().setSettings({
       imageBaseUrl: 'https://image.example.test/v1',
       imageApiKey: 'image-only',
       llmBaseUrl: 'https://llm.example.test/v1',
       llmApiKey: 'llm-only',
-      museScorePath: 'C:\\Program Files\\MuseScore 4\\bin\\MuseScore4.exe',
       autoPageTurn: true,
       timelineFollow: false,
       llmModel: 'gpt-5-mini',
@@ -128,12 +127,39 @@ describe('workspace store', () => {
     });
 
     expect(JSON.parse(localStorage.getItem('waterclip.settings') ?? '{}')).toMatchObject({
-      museScorePath: 'C:\\Program Files\\MuseScore 4\\bin\\MuseScore4.exe',
       autoPageTurn: true,
       imageApiKey: 'image-only',
       llmApiKey: 'llm-only',
       timelineFollow: false,
     });
+    expect(localStorage.getItem('waterclip.settings')).not.toContain('museScorePath');
+  });
+
+  it('工程重命名进入撤销历史并限制空名称', () => {
+    useWorkspace.getState().renameProject('  新工程名  ');
+    expect(useWorkspace.getState().project.name).toBe('新工程名');
+    useWorkspace.getState().undo();
+    expect(useWorkspace.getState().project.name).toBe('测试合奏');
+    useWorkspace.getState().renameProject('   ');
+    expect(useWorkspace.getState().project.name).toBe('测试合奏');
+  });
+
+  it('按复选范围将同声部同景别字段应用到其他分镜', () => {
+    useWorkspace.getState().setSelection({ partIds: ['violin'], startMeasure: 1, endMeasure: 1 });
+    const source = useWorkspace.getState().addGroup()!;
+    useWorkspace.getState().setSelection({ partIds: ['violin'], startMeasure: 2, endMeasure: 2 });
+    const target = useWorkspace.getState().addGroup()!;
+    useWorkspace.getState().updateShot(source.id, source.shots[0].id, {
+      description: '新的描述', imageAssetId: 'storyboard-image', referenceAssetId: undefined
+    });
+    useWorkspace.getState().updateShot(target.id, target.shots[0].id, { description: '旧描述' });
+
+    expect(useWorkspace.getState().applyShotToSameType(source.id, source.shots[0].id, { image: true, description: false })).toBe(1);
+    expect(useWorkspace.getState().project.shotGroups[1].shots[0]).toMatchObject({
+      description: '旧描述', imageAssetId: 'storyboard-image'
+    });
+    expect(useWorkspace.getState().applyShotToSameType(source.id, source.shots[0].id, { image: false, description: true })).toBe(1);
+    expect(useWorkspace.getState().project.shotGroups[1].shots[0].description).toBe('新的描述');
   });
 
   it('迁移旧版共用凭据后保持两套字段互相独立，联动默认开启', () => {

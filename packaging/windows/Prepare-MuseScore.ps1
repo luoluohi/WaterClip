@@ -20,7 +20,10 @@ if (Test-Path -LiteralPath $link) {
   $currentTarget = if ($item.LinkType -eq "Junction") { [IO.Path]::GetFullPath([string]$item.Target) } else { "" }
   if ($currentTarget -ne $target) {
     if ($item.LinkType -ne "Junction") { throw "Runtime link path is occupied by a real directory: $link" }
-    Remove-Item -LiteralPath $link -Force
+    Remove-Item -LiteralPath $link -Recurse -Force -ErrorAction SilentlyContinue
+    if (Test-Path -LiteralPath $link) {
+      & cmd.exe /c rmdir "$link" | Out-Null
+    }
   }
 }
 if (-not (Test-Path -LiteralPath $link)) {

@@ -129,7 +129,7 @@ export async function convertMsczToMusicXml({
   bytes,
   filename,
   museScorePath,
-  timeoutMs = 30_000,
+  timeoutMs = 120_000,
   execImpl = execFileAsync,
 }: ConvertInput): Promise<Buffer> {
   const workspace = await mkdtemp(join(tmpdir(), 'waterclip-score-'));

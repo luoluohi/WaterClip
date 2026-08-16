@@ -17,7 +17,6 @@ export interface AppSettings {
   imageApiKey: string;
   llmBaseUrl: string;
   llmApiKey: string;
-  museScorePath: string;
   autoPageTurn: boolean;
   timelineFollow: boolean;
   llmModel: string;
@@ -29,7 +28,6 @@ export const DEFAULT_SETTINGS: AppSettings = {
   imageApiKey: '',
   llmBaseUrl: 'https://api.openai.com/v1',
   llmApiKey: '',
-  museScorePath: '',
   autoPageTurn: false,
   timelineFollow: true,
   llmModel: 'gpt-5-mini',
@@ -47,7 +45,6 @@ export function normalizeSettings(value: unknown): AppSettings {
     imageApiKey: typeof stored.imageApiKey === 'string' ? stored.imageApiKey : legacyApiKey,
     llmBaseUrl: typeof stored.llmBaseUrl === 'string' ? stored.llmBaseUrl : legacyBaseUrl,
     llmApiKey: typeof stored.llmApiKey === 'string' ? stored.llmApiKey : legacyApiKey,
-    museScorePath: typeof stored.museScorePath === 'string' ? stored.museScorePath : DEFAULT_SETTINGS.museScorePath,
     autoPageTurn: typeof stored.autoPageTurn === 'boolean' ? stored.autoPageTurn : DEFAULT_SETTINGS.autoPageTurn,
     timelineFollow: typeof stored.timelineFollow === 'boolean' ? stored.timelineFollow : true,
     llmModel: typeof stored.llmModel === 'string' ? stored.llmModel : DEFAULT_SETTINGS.llmModel,
@@ -67,7 +64,9 @@ interface WorkspaceState {
   setSelection(selection?: ScoreSelection): void;
   addGroup(): ShotGroup | undefined;
   selectGroup(id?: string): void;
+  renameProject(name: string): void;
   updateShot(groupId: string, shotId: string, patch: Partial<Shot>): void;
+  applyShotToSameType(groupId: string, shotId: string, scope?: ApplyShotScope): number;
   updateLayout(groupId: string, layout: SplitLayout): void;
   updateRangeOccurrence(groupId: string, occurrence: number | 'all'): void;
   swapGroupSlots(groupId: string, from: number, to: number): void;
@@ -79,6 +78,11 @@ interface WorkspaceState {
   replaceProject(project: Project): void;
   undo(): void;
   redo(): void;
+}
+
+export interface ApplyShotScope {
+  image: boolean;
+  description: boolean;
 }
 
 interface WorkspaceSnapshot {
@@ -166,6 +170,13 @@ export const useWorkspace = create<WorkspaceState>((set, get) => ({
     return group;
   },
   selectGroup: (selectedGroupId) => set({ selectedGroupId }),
+  renameProject: (name) => set((state) => {
+    const cleanName = name.trim().slice(0, 100);
+    if (!cleanName || cleanName === state.project.name) return state;
+    return recordChange(state, {
+      project: { ...state.project, name: cleanName, updatedAt: new Date().toISOString() }
+    });
+  }),
   updateShot: (groupId, shotId, patch) => set((state) => recordChange(state, {
     project: {
       ...state.project,
@@ -175,6 +186,37 @@ export const useWorkspace = create<WorkspaceState>((set, get) => ({
         : group)
     }
   })),
+  applyShotToSameType: (groupId, shotId, scope = { image: true, description: true }) => {
+    const state = get();
+    const source = state.project.shotGroups.find((group) => group.id === groupId)?.shots.find((shot) => shot.id === shotId);
+    if (!source || (!scope.image && !scope.description)) return 0;
+    const matches = state.project.shotGroups.reduce((count, group) => count + group.shots.filter((shot) =>
+      shot.id !== source.id && shot.partId === source.partId && shot.size === source.size
+    ).length, 0);
+    if (!matches) return 0;
+    set((current) => recordChange(current, {
+      project: {
+        ...current.project,
+        updatedAt: new Date().toISOString(),
+        shotGroups: current.project.shotGroups.map((group) => ({
+          ...group,
+          shots: group.shots.map((shot) => shot.id !== source.id && shot.partId === source.partId && shot.size === source.size
+            ? {
+                ...shot,
+                ...(scope.description ? { description: source.description } : {}),
+                ...(scope.image ? {
+                  imageAssetId: source.imageAssetId,
+                  referenceAssetId: source.referenceAssetId,
+                  generationStatus: source.imageAssetId ? 'ready' as const : 'idle' as const,
+                  generationError: undefined,
+                } : {})
+              }
+            : shot)
+        }))
+      }
+    }));
+    return matches;
+  },
   updateLayout: (groupId, layout) => set((state) => recordChange(state, {
     project: { ...state.project, updatedAt: new Date().toISOString(), shotGroups: state.project.shotGroups.map((g) => g.id === groupId ? { ...g, layout } : g) }
   })),

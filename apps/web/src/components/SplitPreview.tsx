@@ -29,8 +29,8 @@ export function SplitPreview({ group, assetUrls, onSwap, compact = false }: Prop
           onDragOver={(event) => event.preventDefault()}
           onDrop={() => { if (dragIndex !== undefined && dragIndex !== index) onSwap?.(dragIndex, index); setDragIndex(undefined); }}
         >
-          {shot.imageAssetId && assetUrls[shot.imageAssetId]
-            ? <img src={assetUrls[shot.imageAssetId]} alt={`${shot.partName}示意图`} />
+          {(shot.imageAssetId ?? shot.referenceAssetId) && assetUrls[shot.imageAssetId ?? shot.referenceAssetId!]
+            ? <img src={assetUrls[shot.imageAssetId ?? shot.referenceAssetId!]} alt={`${shot.partName}示意图`} />
             : <div className="split-placeholder"><span>{shot.partName}</span><small>{shot.size}</small></div>}
         </div>
       ))}

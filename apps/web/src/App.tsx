@@ -1,30 +1,24 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import {
-  Aperture, Copy, Download, FileArchive, FileMusic, FileSpreadsheet, FileText, ImagePlus,
+  Aperture, Copy, Download, FileMusic, FileX, FolderOpen, ImagePlus,
   ChevronDown, ChevronLeft, ChevronRight, ChevronUp, LoaderCircle, Maximize2, Music2, Pause, Play, Settings, SlidersHorizontal,
-  Sparkles, Trash2, Upload, Volume2, VolumeX, X, BarChart3, ClipboardPaste, ExternalLink
+  Sparkles, Trash2, Upload, Volume2, VolumeX, X, BarChart3, ClipboardPaste
 } from 'lucide-react';
 import type { Shot, ShotGroup, ShotSize, SplitLayout } from './domain';
 import { buildImagePrompt, occurrenceLabel, SHOT_SIZES } from './domain';
-import { ScoreCanvas, type PlaybackPosition, type ScoreCanvasHandle, type ScoreSelection } from './score/ScoreCanvas';
+import { ScoreCanvas, type PlaybackPosition, type ScoreCanvasHandle } from './score/ScoreCanvas';
 import type { ScoreSectionMarker } from './score/navigation';
 import { TrackLevelBus, isTrackAudible } from './score/trackLevels';
 import { TrackLevelMeter } from './score/TrackLevelMeter';
-import { availableLayouts, sortShotGroupsForStoryboard, useWorkspace, type AppSettings } from './store/workspace';
+import { availableLayouts, sortShotGroupsForStoryboard, useWorkspace, type AppSettings, type ApplyShotScope } from './store/workspace';
 import { SplitPreview } from './components/SplitPreview';
 import { createProjectAutosave, exportProjectPackage, importProjectPackage, ProjectRepository } from './data';
 import type { BinaryAsset } from './domain';
 import { resolveWorkspaceShortcut } from './keyboard';
 import { buildPartStatistics } from './statistics';
-import { connectScoreWindowGuest, connectScoreWindowHost, createScoreWindowConnection, openScoreWindow, readScoreWindowLaunch, type ScoreWindowHostBridge, type ScoreWindowSnapshot } from './components/score';
 import { activeStoryboardTarget, storyboardSeekMeasure, timelineScrollBehavior } from './timelineFollow';
 
 type Health = { museScore?: { available: boolean; version: string | null } };
-
-function museScoreApiUrl(pathname: string, museScorePath: string): string {
-  const path = museScorePath.trim();
-  return path ? `${pathname}?${new URLSearchParams({ museScorePath: path })}` : pathname;
-}
 
 function formatTime(milliseconds: number) {
   const total = Math.max(0, Math.floor(milliseconds / 1000));
@@ -64,8 +58,7 @@ function downloadBlob(blob: Blob, filename: string) {
 }
 
 export function App() {
-  const launch = readScoreWindowLaunch();
-  return launch ? <DetachedScoreWindow channelName={launch.channelName} /> : <WorkspaceApp />;
+  return <WorkspaceApp />;
 }
 
 function WorkspaceApp() {
@@ -74,7 +67,6 @@ function WorkspaceApp() {
   const projectInputRef = useRef<HTMLInputElement>(null);
   const repositoryRef = useRef(new ProjectRepository());
   const autosaveRef = useRef(createProjectAutosave(repositoryRef.current));
-  const scoreWindowBridgeRef = useRef<ScoreWindowHostBridge | undefined>(undefined);
   const storyCardRefs = useRef(new Map<string, HTMLButtonElement>());
   const [levelBus] = useState(() => new TrackLevelBus());
   const project = useWorkspace((s) => s.project);
@@ -87,7 +79,9 @@ function WorkspaceApp() {
   const setSelection = useWorkspace((s) => s.setSelection);
   const addGroup = useWorkspace((s) => s.addGroup);
   const selectGroup = useWorkspace((s) => s.selectGroup);
+  const renameProject = useWorkspace((s) => s.renameProject);
   const updateShot = useWorkspace((s) => s.updateShot);
+  const applyShotToSameType = useWorkspace((s) => s.applyShotToSameType);
   const updateLayout = useWorkspace((s) => s.updateLayout);
   const updateRangeOccurrence = useWorkspace((s) => s.updateRangeOccurrence);
   const swapGroupSlots = useWorkspace((s) => s.swapGroupSlots);
@@ -101,6 +95,7 @@ function WorkspaceApp() {
   const redo = useWorkspace((s) => s.redo);
 
   const [scoreData, setScoreData] = useState<Uint8Array>();
+  const [originalScore, setOriginalScore] = useState<Uint8Array>();
   const [scoreFilename, setScoreFilename] = useState('');
   const [sourceFormat, setSourceFormat] = useState<'musicxml' | 'mscz'>('musicxml');
   const [playing, setPlaying] = useState(false);
@@ -115,6 +110,8 @@ function WorkspaceApp() {
   const [notice, setNotice] = useState('导入 MusicXML 或 MSCZ 开始编排');
   const [busy, setBusy] = useState(false);
   const [statisticsOpen, setStatisticsOpen] = useState(false);
+  const [isRenamingProject, setIsRenamingProject] = useState(false);
+  const [projectNameDraft, setProjectNameDraft] = useState(project.name);
   const [collapsedPanels, setCollapsedPanels] = useState({ inspector: false, mixer: false, storyboard: false });
   const togglePanel = (panel: keyof typeof collapsedPanels) => setCollapsedPanels((value) => ({ ...value, [panel]: !value[panel] }));
 
@@ -145,8 +142,8 @@ function WorkspaceApp() {
   };
 
   useEffect(() => {
-    fetch(museScoreApiUrl('/api/health', settingsValue.museScorePath)).then((r) => r.json()).then(setHealth).catch(() => setHealth(undefined));
-  }, [settingsValue.museScorePath]);
+    fetch('/api/health').then((r) => r.json()).then(setHealth).catch(() => setHealth(undefined));
+  }, []);
 
   useEffect(() => {
     let cancelled = false;
@@ -156,10 +153,13 @@ function WorkspaceApp() {
       if (!saved || cancelled) return;
       replaceProject(saved.project);
       const musicXml = saved.assets.find((asset) => asset.kind === 'score-musicxml');
+      const original = saved.assets.find((asset) => asset.kind === 'score-original');
       if (musicXml) {
         setScoreFilename(saved.project.score?.name ?? '已恢复乐谱.musicxml');
-        setSourceFormat(saved.project.score?.sourceFormat ?? 'musicxml');
+        const restoredFormat = saved.project.score?.sourceFormat ?? 'musicxml';
+        setSourceFormat(restoredFormat);
         setScoreData(new Uint8Array(await musicXml.blob.arrayBuffer()));
+        setOriginalScore(restoredFormat === 'mscz' && original ? new Uint8Array(await original.blob.arrayBuffer()) : undefined);
       }
       for (const asset of saved.assets.filter((item) => item.kind.endsWith('image'))) {
         setAssetUrl(asset.id, URL.createObjectURL(asset.blob));
@@ -175,11 +175,6 @@ function WorkspaceApp() {
 
   useEffect(() => () => { void autosaveRef.current.dispose(); }, []);
   useEffect(() => () => levelBus.destroy(), [levelBus]);
-  useEffect(() => () => scoreWindowBridgeRef.current?.close(), []);
-
-  useEffect(() => {
-    scoreWindowBridgeRef.current?.publish({ scoreData, scoreName: scoreFilename, position, playing, mutedTracks: [...muted], soloTracks: [...soloed], zoom });
-  }, [muted, playing, position, scoreData, scoreFilename, soloed, zoom]);
 
   const persistAssetUrl = useCallback(async (assetId: string, dataUrl: string, kind: BinaryAsset['kind'], filename: string) => {
     setAssetUrl(assetId, dataUrl);
@@ -230,7 +225,7 @@ function WorkspaceApp() {
       const shot = selectedGroup.shots[0];
       const id = `reference-${crypto.randomUUID()}`;
       await persistAssetUrl(id, await readFileAsDataUrl(file), 'reference-image', file.name || 'clipboard-reference.png');
-      updateShot(selectedGroup.id, shot.id, { referenceAssetId: id });
+      updateShot(selectedGroup.id, shot.id, { imageAssetId: id, referenceAssetId: undefined });
       setNotice(`已从剪贴板添加 ${shot.partName} 参考图`);
     };
     window.addEventListener('paste', handler);
@@ -244,13 +239,16 @@ function WorkspaceApp() {
       const isMscz = file.name.toLowerCase().endsWith('.mscz');
       let bytes: Uint8Array;
       if (isMscz) {
+        const originalBytes = new Uint8Array(await file.arrayBuffer());
+        setOriginalScore(originalBytes);
         const form = new FormData();
         form.set('score', file);
-        const response = await fetch(museScoreApiUrl('/api/scores/convert', settingsValue.museScorePath), { method: 'POST', body: form });
+        const response = await fetch('/api/scores/convert', { method: 'POST', body: form });
         if (!response.ok) throw new Error((await response.json()).error || 'MSCZ 转换失败');
         bytes = new Uint8Array(await response.arrayBuffer());
       } else {
         bytes = new Uint8Array(await file.arrayBuffer());
+        setOriginalScore(undefined);
       }
       setScoreFilename(file.name);
       setSourceFormat(isMscz ? 'mscz' : 'musicxml');
@@ -285,23 +283,6 @@ function WorkspaceApp() {
     }
   };
 
-  const openDetachedScore = () => {
-    if (!scoreData) { setNotice('请先导入乐谱'); return; }
-    scoreWindowBridgeRef.current?.close();
-    const opened = openScoreWindow();
-    if (!opened) { setNotice('浏览器阻止了独立窗口，请允许本站弹出窗口'); return; }
-    const snapshot: ScoreWindowSnapshot = { scoreData, scoreName: scoreFilename, position, playing, mutedTracks: [...muted], soloTracks: [...soloed], zoom };
-    scoreWindowBridgeRef.current = connectScoreWindowHost(opened.connection, snapshot, (command) => {
-      if (command.kind === 'play-pause') scoreRef.current?.playPause();
-      if (command.kind === 'stop') scoreRef.current?.stop();
-      if (command.kind === 'seek-ratio') scoreRef.current?.seekRatio(command.ratio);
-      if (command.kind === 'seek-measure') scoreRef.current?.seekMeasure(command.measure);
-      if (command.kind === 'set-zoom') { setZoom(command.zoom); scoreRef.current?.setZoom(command.zoom); }
-      if (command.kind === 'toggle-track') toggleTrack(command.trackIndex, command.mode);
-    });
-    setNotice('乐谱已拆分到独立窗口，可拖到其他屏幕');
-  };
-
   const generateImage = async (group: ShotGroup, shot: Shot) => {
     if (!settingsValue.imageBaseUrl.trim() || !settingsValue.imageApiKey.trim()) { setSettingsOpen(true); setNotice('请先在设置中填写图像生成服务地址与 API Key'); return; }
     updateShot(group.id, shot.id, { generationStatus: 'generating', generationError: undefined });
@@ -310,8 +291,7 @@ function WorkspaceApp() {
         method: 'POST', headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
           baseUrl: settingsValue.imageBaseUrl, apiKey: settingsValue.imageApiKey,
-          prompt: buildImagePrompt(shot),
-          referenceDataUrl: shot.referenceAssetId ? assetUrls[shot.referenceAssetId] : undefined
+          prompt: buildImagePrompt(shot)
         })
       });
       const payload = await response.json();
@@ -339,7 +319,7 @@ function WorkspaceApp() {
       const blob = await item.getType(type);
       const id = `reference-${crypto.randomUUID()}`;
       await persistAssetUrl(id, await readFileAsDataUrl(new File([blob], 'clipboard-reference.png', { type })), 'reference-image', 'clipboard-reference.png');
-      updateShot(group.id, shot.id, { referenceAssetId: id });
+      updateShot(group.id, shot.id, { imageAssetId: id, referenceAssetId: undefined });
       setNotice(`已为 ${shot.partName} 粘贴参考图`);
     } catch (error) {
       setNotice(error instanceof Error ? error.message : '无法读取剪贴板图片');
@@ -379,10 +359,13 @@ function WorkspaceApp() {
       replaceProject(imported.project);
       for (const asset of imported.assets.filter((item) => item.kind.endsWith('image'))) setAssetUrl(asset.id, URL.createObjectURL(asset.blob));
       const score = imported.assets.find((asset) => asset.kind === 'score-musicxml');
+      const original = imported.assets.find((asset) => asset.kind === 'score-original');
       if (score) {
         setScoreFilename(imported.project.score?.name ?? '项目乐谱.musicxml');
-        setSourceFormat(imported.project.score?.sourceFormat ?? 'musicxml');
+        const importedFormat = imported.project.score?.sourceFormat ?? 'musicxml';
+        setSourceFormat(importedFormat);
         setScoreData(new Uint8Array(await score.blob.arrayBuffer()));
+        setOriginalScore(importedFormat === 'mscz' && original ? new Uint8Array(await original.blob.arrayBuffer()) : undefined);
       }
       setNotice(`已打开项目「${imported.project.name}」`);
     } catch (error) { setNotice(error instanceof Error ? error.message : '项目打开失败'); }
@@ -396,7 +379,7 @@ function WorkspaceApp() {
       const saved = await repositoryRef.current.load(project.id);
       const blob = await exportShotListXlsx(project, { assets: saved?.assets ?? [] });
       downloadBlob(blob, `${project.name}-分镜表.xlsx`);
-      setNotice('五列分镜 XLSX 已导出');
+      setNotice('分镜 XLSX 已导出');
     } catch (error) { setNotice(error instanceof Error ? error.message : 'XLSX 导出失败'); }
     finally { setBusy(false); }
   };
@@ -414,15 +397,16 @@ function WorkspaceApp() {
         description: shot.description,
       })));
       const form = new FormData();
-      form.set('parts', JSON.stringify(parts.map((part) => ({ id: part.id, staffCount: Math.max(1, part.staffIds.length) }))));
+      form.set('parts', JSON.stringify(parts.map((part) => ({ id: part.id, name: part.name, staffCount: Math.max(1, part.staffIds.length) }))));
       form.set('annotations', JSON.stringify(annotations));
-      form.set('score', new Blob([scoreData.slice().buffer as ArrayBuffer], { type: 'application/vnd.recordare.musicxml+xml' }), 'waterclip-score.musicxml');
-      const response = await fetch(museScoreApiUrl('/api/scores/export-pdf', settingsValue.museScorePath), { method: 'POST', body: form });
+      const exportScore = originalScore ?? scoreData;
+      form.set('score', new Blob([exportScore.slice().buffer as ArrayBuffer], { type: originalScore ? 'application/vnd.musescore.score' : 'application/vnd.recordare.musicxml+xml' }), originalScore ? 'waterclip-score.mscz' : 'waterclip-score.musicxml');
+      const response = await fetch('/api/scores/export-pdf', { method: 'POST', body: form });
       if (!response.ok) {
         const payload = await response.json().catch(() => ({ error: 'PDF 导出失败' }));
         throw new Error(payload.error || 'PDF 导出失败');
       }
-      downloadBlob(await response.blob(), `${project.name}-导演标记谱.pdf`);
+      downloadBlob(await response.blob(), `${project.name}-制片标记谱.pdf`);
       setNotice(`PDF 已导出 · ${annotations.length} 个分镜标记`);
     } catch (error) {
       setNotice(error instanceof Error ? error.message : 'PDF 导出失败');
@@ -431,21 +415,30 @@ function WorkspaceApp() {
     }
   };
 
+  const beginProjectRename = () => {
+    setProjectNameDraft(project.name);
+    setIsRenamingProject(true);
+  };
+
+  const finishProjectRename = () => {
+    renameProject(projectNameDraft);
+    setIsRenamingProject(false);
+  };
+
   return (
     <div className="app-shell">
       <header className="topbar">
         <div className="brand"><span className="brand-mark"><Music2 size={18} /></span><div><strong>WaterClip</strong><small>ENSEMBLE SHOT DESK</small></div></div>
-        <div className="project-title"><span className="status-dot" />{project.name}<small>{project.score ? `${parts.length} 个声部` : '尚未导入乐谱'}</small></div>
+        {isRenamingProject ? <div className="project-title is-renaming"><span className="status-dot" /><input className="project-name-input" aria-label="工程名称" autoFocus maxLength={100} value={projectNameDraft} onChange={(event) => setProjectNameDraft(event.target.value)} onBlur={finishProjectRename} onKeyDown={(event) => { if (event.key === 'Enter') finishProjectRename(); if (event.key === 'Escape') setIsRenamingProject(false); }} /><small>{project.score ? `${parts.length} 个声部` : '尚未导入乐谱'}</small></div> : <button type="button" className="project-title" title="重命名工程" onClick={beginProjectRename}><span className="status-dot" />{project.name}<small>{project.score ? `${parts.length} 个声部` : '尚未导入乐谱'}</small></button>}
         <div className="top-actions">
           <input ref={scoreInputRef} hidden type="file" accept=".mscz,.musicxml,.xml,.mxl" onChange={(e) => e.target.files?.[0] && importScore(e.target.files[0])} />
           <input ref={projectInputRef} hidden type="file" accept=".waterclip" onChange={(e) => e.target.files?.[0] && openProject(e.target.files[0])} />
           <button className="button primary" onClick={() => scoreInputRef.current?.click()} disabled={busy}><Upload size={16} />导入乐谱</button>
-          <button className="icon-button" title="打开 WaterClip 项目" onClick={() => projectInputRef.current?.click()}><FileArchive size={18} /></button>
+          <button className="icon-button" title="打开 WaterClip 项目" onClick={() => projectInputRef.current?.click()}><FolderOpen size={18} /></button>
           <button className="icon-button" title="导出 WaterClip 项目" onClick={exportProject} disabled={!project.score || busy}><Download size={18} /></button>
-          <button className="icon-button" title="导出 XLSX" onClick={exportXlsx} disabled={!project.shotGroups.length || busy}><FileSpreadsheet size={18} /></button>
-          <button className="icon-button" title="导出带分镜标记的 PDF" onClick={exportPdf} disabled={!scoreData || busy}><FileText size={18} /></button>
+          <button className="icon-button" title="导出 XLSX" onClick={exportXlsx} disabled={!project.shotGroups.length || busy}><FileX size={18} /></button>
+          <button className="icon-button" title="导出带分镜标记的 PDF" onClick={exportPdf} disabled={!scoreData || busy}><FileMusic size={18} /></button>
           <button className="icon-button" title="声部与分镜统计" onClick={() => setStatisticsOpen(true)}><BarChart3 size={18} /></button>
-          <button className="icon-button" title="拆分乐谱到独立窗口" onClick={openDetachedScore} disabled={!scoreData}><ExternalLink size={18} /></button>
           <button className="icon-button" title="设置" onClick={() => { setSettingsDraft(settingsValue); setSettingsOpen(true); }}><Settings size={18} /></button>
         </div>
       </header>
@@ -458,7 +451,7 @@ function WorkspaceApp() {
           <div className="group-tabs">
             {project.shotGroups.map((group, index) => <button className={group.id === selectedGroupId ? 'active' : ''} key={group.id} onClick={() => selectGroup(group.id)}>#{String(index + 1).padStart(2, '0')}</button>)}
           </div>
-          {selectedGroup ? <GroupEditor group={selectedGroup} assetUrls={assetUrls} onUpdateShot={updateShot} onOccurrence={updateRangeOccurrence} onLayout={updateLayout} onSwap={swapGroupSlots} onDuplicate={duplicateGroupShot} onDelete={deleteGroup} onGenerate={generateImage} onEnhance={enhancePrompt} onPaste={pasteReference} onSetAsset={(id, dataUrl, filename) => persistAssetUrl(id, dataUrl, 'reference-image', filename)} /> : <div className="empty-inspector"><Aperture size={32} /><h3>等待取景</h3><p>在乐谱中拖拽框选声部和小节，再按 Enter 创建分镜。</p></div>}
+          {selectedGroup ? <GroupEditor group={selectedGroup} groups={project.shotGroups} assetUrls={assetUrls} onUpdateShot={updateShot} onApplySameType={(groupId, shotId, scope) => { const count = applyShotToSameType(groupId, shotId, scope); const range = [scope.image && '参考图', scope.description && '描述'].filter(Boolean).join('和'); setNotice(count ? `已将${range}应用到 ${count} 个同类型镜头` : '没有可应用的同类型镜头'); }} onOccurrence={updateRangeOccurrence} onLayout={updateLayout} onSwap={swapGroupSlots} onDuplicate={duplicateGroupShot} onDelete={deleteGroup} onGenerate={generateImage} onEnhance={enhancePrompt} onPaste={pasteReference} onSetAsset={(id, dataUrl, filename) => persistAssetUrl(id, dataUrl, 'reference-image', filename)} /> : <div className="empty-inspector"><Aperture size={32} /><h3>等待取景</h3><p>在乐谱中拖拽框选声部和小节，再按 Enter 创建分镜。</p></div>}
           </>}
         </aside>
 
@@ -506,8 +499,9 @@ function WorkspaceApp() {
 }
 
 interface GroupEditorProps {
-  group: ShotGroup; assetUrls: Record<string, string>;
+  group: ShotGroup; groups: ShotGroup[]; assetUrls: Record<string, string>;
   onUpdateShot(groupId: string, shotId: string, patch: Partial<Shot>): void;
+  onApplySameType(groupId: string, shotId: string, scope: ApplyShotScope): void;
   onOccurrence(groupId: string, occurrence: number | 'all'): void;
   onLayout(groupId: string, layout: SplitLayout): void;
   onSwap(groupId: string, from: number, to: number): void;
@@ -519,12 +513,29 @@ interface GroupEditorProps {
   onSetAsset(assetId: string, dataUrl: string, filename: string): void | Promise<void>;
 }
 
-function GroupEditor({ group, assetUrls, onUpdateShot, onOccurrence, onLayout, onSwap, onDuplicate, onDelete, onGenerate, onEnhance, onPaste, onSetAsset }: GroupEditorProps) {
+function GroupEditor({ group, groups, assetUrls, onUpdateShot, onApplySameType, onOccurrence, onLayout, onSwap, onDuplicate, onDelete, onGenerate, onEnhance, onPaste, onSetAsset }: GroupEditorProps) {
+  const [applyScopes, setApplyScopes] = useState<Record<string, ApplyShotScope>>({});
+  const scopeFor = (shotId: string) => applyScopes[shotId] ?? { image: true, description: true };
+  const updateScope = (shotId: string, patch: Partial<ApplyShotScope>) => setApplyScopes((value) => ({ ...value, [shotId]: { ...scopeFor(shotId), ...patch } }));
+
   return <div className="group-editor">
     <div className="range-strip"><span>M.{group.range.startMeasure}–{group.range.endMeasure}</span><select aria-label="播放遍次" value={group.range.occurrence} onChange={(event) => onOccurrence(group.id, event.target.value === 'all' ? 'all' : Number(event.target.value))}>{[1, 2, 3].map((value) => <option key={value} value={value}>{occurrenceLabel(value)}</option>)}<option value="all">{occurrenceLabel('all')}</option></select><button onClick={() => onDelete(group.id)} title="删除分镜组"><Trash2 size={15} /></button></div>
     <SplitPreview group={group} assetUrls={assetUrls} onSwap={(a, b) => onSwap(group.id, a, b)} />
     <label className="field-label">分屏编排<select value={JSON.stringify(group.layout)} onChange={(e) => onLayout(group.id, JSON.parse(e.target.value))}>{availableLayouts(group.shots.length).map((layout) => <option key={JSON.stringify(layout)} value={JSON.stringify(layout)}>{layoutLabel(layout)}</option>)}</select></label>
-    <div className="shot-list">{group.shots.map((shot) => <article className="shot-editor" key={shot.id}><div className="shot-editor-head"><span className="instrument-chip">{shot.partName}</span><button onClick={() => onDuplicate(group.id, shot.id)} title="复制补拍"><Copy size={14} /></button></div><div className="shot-size-row">{SHOT_SIZES.map((size) => <button className={shot.size === size ? 'active' : ''} key={size} onClick={() => onUpdateShot(group.id, shot.id, { size: size as ShotSize })}>{size}</button>)}</div><textarea value={shot.description} onChange={(e) => onUpdateShot(group.id, shot.id, { description: e.target.value })} placeholder="例如：低机位沿琴弓推进，保持手部动作清晰" /><button className="prompt-button" onClick={() => onEnhance(group, shot)}><Sparkles size={13} />LLM 辅助完善拍摄描述</button><div className="reference-row"><label className="reference-upload"><ImagePlus size={14} />{shot.referenceAssetId ? '替换参考图' : '上传参考图'}<input hidden type="file" accept="image/png,image/jpeg,image/webp" onChange={async (e) => { const file = e.target.files?.[0]; if (!file) return; const id = `reference-${crypto.randomUUID()}`; await onSetAsset(id, await readFileAsDataUrl(file), file.name); onUpdateShot(group.id, shot.id, { referenceAssetId: id }); }} /></label><button type="button" onClick={() => onPaste(group, shot)}><ClipboardPaste size={13} />粘贴剪贴板</button>{shot.referenceAssetId && <button onClick={() => onUpdateShot(group.id, shot.id, { referenceAssetId: undefined })}><X size={13} />移除</button>}</div><button className="generate-button" disabled={!shot.description.trim() || shot.generationStatus === 'generating'} onClick={() => onGenerate(group, shot)}>{shot.generationStatus === 'generating' ? <LoaderCircle className="spin" size={15} /> : <Sparkles size={15} />}生成 1280×720 示意图</button>{shot.generationError && <p className="field-error">{shot.generationError}</p>}</article>)}</div>
+    <div className="shot-list">{group.shots.map((shot) => {
+      const currentImageId = shot.imageAssetId ?? shot.referenceAssetId;
+      const scope = scopeFor(shot.id);
+      const matchCount = groups.reduce((count, candidateGroup) => count + candidateGroup.shots.filter((candidate) => candidate.id !== shot.id && candidate.partId === shot.partId && candidate.size === shot.size).length, 0);
+      return <article className="shot-editor" key={shot.id}>
+        <div className="shot-editor-head"><span className="instrument-chip">{shot.partName}</span><button onClick={() => onDuplicate(group.id, shot.id)} title="复制补拍"><Copy size={14} /></button></div>
+        <div className="shot-size-row">{SHOT_SIZES.map((size) => <button className={shot.size === size ? 'active' : ''} key={size} onClick={() => onUpdateShot(group.id, shot.id, { size: size as ShotSize })}>{size}</button>)}</div>
+        <textarea value={shot.description} onChange={(e) => onUpdateShot(group.id, shot.id, { description: e.target.value })} placeholder="例如：低机位沿琴弓推进，保持手部动作清晰" />
+        <button className="prompt-button" onClick={() => onEnhance(group, shot)}><Sparkles size={13} />LLM 辅助完善拍摄描述</button>
+        <div className="reference-row"><label className="reference-upload"><ImagePlus size={14} />{currentImageId ? '替换参考图' : '上传参考图'}<input hidden type="file" accept="image/png,image/jpeg,image/webp" onChange={async (e) => { const file = e.target.files?.[0]; if (!file) return; const id = `reference-${crypto.randomUUID()}`; await onSetAsset(id, await readFileAsDataUrl(file), file.name); onUpdateShot(group.id, shot.id, { imageAssetId: id, referenceAssetId: undefined }); e.currentTarget.value = ''; }} /></label><button type="button" onClick={() => onPaste(group, shot)}><ClipboardPaste size={13} />粘贴剪贴板</button>{currentImageId && <button onClick={() => onUpdateShot(group.id, shot.id, { imageAssetId: undefined, referenceAssetId: undefined })}><X size={13} />移除</button>}</div>
+        <div className="apply-scope-row"><span>应用到同类型</span><label className="apply-scope-option"><input type="checkbox" checked={scope.image} onChange={(event) => updateScope(shot.id, { image: event.target.checked })} />参考图</label><label className="apply-scope-option"><input type="checkbox" checked={scope.description} onChange={(event) => updateScope(shot.id, { description: event.target.checked })} />描述</label><button type="button" disabled={!matchCount || (!scope.image && !scope.description)} onClick={() => onApplySameType(group.id, shot.id, scope)}>应用{matchCount ? `（${matchCount}）` : ''}</button></div>
+        <button className="generate-button" disabled={!shot.description.trim() || shot.generationStatus === 'generating'} onClick={() => onGenerate(group, shot)}>{shot.generationStatus === 'generating' ? <LoaderCircle className="spin" size={15} /> : <Sparkles size={15} />}生成 1280×720 示意图</button>{shot.generationError && <p className="field-error">{shot.generationError}</p>}
+      </article>;
+    })}</div>
   </div>;
 }
 
@@ -534,7 +545,6 @@ function SettingsDialog({ value, onChange, onClose, onSave }: { value: AppSettin
       <header><div><span className="eyebrow">LOCAL SETTINGS</span><h2>本机工具与服务设置</h2></div><button className="icon-button" onClick={onClose}><X size={18} /></button></header>
       <div className="settings-body">
         <div className="settings-section"><h3>谱面与播放</h3>
-          <label>MuseScore 可执行文件<input value={value.museScorePath} onChange={(e) => onChange({ ...value, museScorePath: e.target.value })} placeholder="C:\Program Files\MuseScore 4\bin\MuseScore4.exe" /><small>留空时由本地服务自动探测；路径只随本次同源请求发送。</small></label>
           <label className="setting-toggle"><input type="checkbox" checked={value.timelineFollow} onChange={(e) => onChange({ ...value, timelineFollow: e.target.checked })} /><span><strong>故事板、播放进度与谱面联动</strong><small>播放时自动跟随当前分镜；点击故事板会跳到对应小节。默认开启。</small></span></label>
           <label className="setting-toggle"><input type="checkbox" checked={value.autoPageTurn} onChange={(e) => onChange({ ...value, autoPageTurn: e.target.checked })} /><span><strong>播放时自动整页翻谱</strong><small>当前页播放完才向右移动，并保留上一页最后一小节作为衔接。</small></span></label>
           <label className="setting-toggle"><input type="checkbox" checked={value.hardwareAcceleration} onChange={(e) => onChange({ ...value, hardwareAcceleration: e.target.checked })} /><span><strong>渲染硬件加速</strong><small>优先使用浏览器合成层与工作线程；遇到显卡兼容问题时可关闭。</small></span></label>
@@ -551,7 +561,7 @@ function SettingsDialog({ value, onChange, onClose, onSave }: { value: AppSettin
         </div>
         <div className="security-note"><VolumeX size={17} /><p><strong>两套密钥彼此独立，仅保存在这台电脑的浏览器中。</strong><br />它们不会写入项目包，也不会进入服务端日志。</p></div>
       </div>
-      <footer><button className="button" onClick={onClose}>取消</button><button className="button primary" onClick={onSave}>保存设置</button></footer>
+      <footer><span className="version-label">WaterClip v0.1.0</span><button className="button" onClick={onClose}>取消</button><button className="button primary" onClick={onSave}>保存设置</button></footer>
     </section>
   </div>;
 }
@@ -559,44 +569,4 @@ function SettingsDialog({ value, onChange, onClose, onSave }: { value: AppSettin
 function StatisticsDialog({ values, onClose }: { values: ReturnType<typeof buildPartStatistics>; onClose(): void }) {
   const totals = values.reduce((sum, value) => ({ measures: sum.measures + value.selectedMeasureCount, shots: sum.shots + value.shotCount }), { measures: 0, shots: 0 });
   return <div className="dialog-backdrop" onMouseDown={(event) => { if (event.target === event.currentTarget) onClose(); }}><section className="settings-dialog statistics-dialog" role="dialog" aria-modal="true" aria-label="声部统计"><header><div><span className="eyebrow">COVERAGE REPORT</span><h2>声部与分镜统计</h2></div><button className="icon-button" onClick={onClose}><X size={18} /></button></header><div className="statistics-summary"><strong>{values.length}</strong><span>声部</span><strong>{totals.measures}</strong><span>覆盖小节次</span><strong>{totals.shots}</strong><span>子镜头</span></div><div className="statistics-list">{values.map((value) => <div key={value.partId}><strong>{value.partName}</strong><span>{value.selectedMeasureCount} 小节</span><span>{value.shotCount} 分镜</span></div>)}</div></section></div>;
-}
-
-function DetachedScoreWindow({ channelName }: { channelName: string }) {
-  const scoreRef = useRef<ScoreCanvasHandle>(null);
-  const [levelBus] = useState(() => new TrackLevelBus());
-  const [snapshot, setSnapshot] = useState<ScoreWindowSnapshot>({ playing: false, mutedTracks: [], soloTracks: [], zoom: 0.82 });
-  const [selection, setSelection] = useState<ScoreSelection>();
-  const connectionRef = useRef<ReturnType<typeof createScoreWindowConnection> | undefined>(undefined);
-
-  useEffect(() => {
-    const connection = createScoreWindowConnection(channelName);
-    connectionRef.current = connection;
-    const bridge = connectScoreWindowGuest(connection, setSnapshot);
-    return () => { bridge.close(); levelBus.destroy(); };
-  }, [channelName, levelBus]);
-
-  useEffect(() => {
-    if (!snapshot.position?.endTick) return;
-    scoreRef.current?.seekRatio(snapshot.position.currentTick / snapshot.position.endTick);
-  }, [snapshot.position?.currentTick, snapshot.position?.endTick]);
-
-  const command = (value: Parameters<ReturnType<typeof connectScoreWindowGuest>['command']>[0]) => {
-    connectionRef.current?.post({ type: 'command', command: value });
-  };
-
-  return (
-    <main className="detached-score-shell">
-      <header>
-        <div><span className="eyebrow">DETACHED CONDUCTOR SCORE</span><h1>{snapshot.scoreName || 'WaterClip 乐谱窗口'}</h1></div>
-        <div className="detached-controls">
-          <button className="transport" onClick={() => command({ kind: 'play-pause' })}>{snapshot.playing ? <Pause size={17} /> : <Play size={17} />}</button>
-          <span className="timecode">{formatTime(snapshot.position?.currentTime ?? 0)}</span>
-          <input aria-label="播放位置" type="range" min="0" max="1000" value={snapshot.position?.endTick ? Math.round((snapshot.position.currentTick / snapshot.position.endTick) * 1000) : 0} onChange={(event) => command({ kind: 'seek-ratio', ratio: Number(event.target.value) / 1000 })} />
-        </div>
-      </header>
-      <section>
-        {snapshot.scoreData ? <ScoreCanvas ref={scoreRef} data={snapshot.scoreData} selection={selection} hardwareAcceleration activeShotCells={[]} autoPageTurn={false} followPlayback mutedTracks={new Set(snapshot.mutedTracks)} soloTracks={new Set(snapshot.soloTracks)} onToggleTrack={(trackIndex, mode) => command({ kind: 'toggle-track', trackIndex, mode })} levelBus={levelBus} onParts={() => undefined} onSelection={setSelection} onPosition={() => undefined} onPlayingChange={() => undefined} onSections={() => undefined} onError={() => undefined} /> : <div className="score-empty">等待主窗口发送乐谱…</div>}
-      </section>
-    </main>
-  );
 }

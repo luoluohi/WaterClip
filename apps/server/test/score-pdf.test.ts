@@ -1,5 +1,5 @@
 import { describe, expect, it, vi } from 'vitest';
-import { access, writeFile } from 'node:fs/promises';
+import { access, readFile, writeFile } from 'node:fs/promises';
 import { PDFDocument } from 'pdf-lib';
 import { exportAnnotatedScorePdf, overlayStoryboardAnnotations, parseMeasurePositions } from '../src/score-pdf.js';
 
@@ -30,13 +30,15 @@ describe('MuseScore PDF 分镜叠加', () => {
     const loaded = await PDFDocument.load(result);
     expect(loaded.getPageCount()).toBe(1);
     expect(result.length).toBeGreaterThan(source.length);
-    expect(loaded.getPage(0).getCropBox().width).toBeLessThan(700);
+    expect(loaded.getPage(0).getCropBox().width).toBe(700);
   });
 
   it('在受控临时目录中生成 PDF 与 mpos 并在完成后清理', async () => {
     let workspace = '';
+    let styleText = '';
     const execImpl = vi.fn(async (_command, args, options) => {
       workspace = String(options?.cwd);
+      styleText = await readFile(String(args[1]), 'utf8');
       const output = String(args[args.indexOf('-o') + 1]);
       await writeFile(output, output.endsWith('.pdf') ? await blankPdf() : mpos);
       return { stdout: '', stderr: '' };
@@ -46,7 +48,11 @@ describe('MuseScore PDF 分镜叠加', () => {
       parts: [{ id: 'track-0', staffCount: 1 }], annotations: [], execImpl,
     });
     expect(result.subarray(0, 5).toString()).toBe('%PDF-');
-    expect(execImpl).toHaveBeenCalledTimes(2);
+    expect(execImpl).toHaveBeenCalledTimes(3);
+    expect(styleText).toContain('<headerFirstPage>0</headerFirstPage>');
+    expect(styleText).toContain('<evenHeaderL>$p</evenHeaderL>');
+    expect(styleText).toContain('<oddHeaderR>$p</oddHeaderR>');
+    expect(styleText).not.toContain('waterclip-score');
     await expect(access(workspace)).rejects.toThrow();
   });
 });

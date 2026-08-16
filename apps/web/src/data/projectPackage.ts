@@ -40,11 +40,48 @@ function extensionFor(asset: BinaryAsset): string {
   return byMime[asset.mimeType] ?? 'bin';
 }
 
+async function optimizeProjectImage(asset: BinaryAsset): Promise<BinaryAsset> {
+  if (!asset.kind.endsWith('image') || !asset.mimeType.startsWith('image/')) return asset;
+  let bitmap: ImageBitmap | undefined;
+  try {
+    bitmap = await createImageBitmap(asset.blob);
+    const scale = Math.min(1, 1600 / bitmap.width, 900 / bitmap.height);
+    const width = Math.max(1, Math.round(bitmap.width * scale));
+    const height = Math.max(1, Math.round(bitmap.height * scale));
+    const canvas = document.createElement('canvas');
+    canvas.width = width;
+    canvas.height = height;
+    const context = canvas.getContext('2d', { alpha: false });
+    if (!context) return asset;
+    context.fillStyle = '#ffffff';
+    context.fillRect(0, 0, width, height);
+    context.drawImage(bitmap, 0, 0, width, height);
+    const jpeg = await new Promise<Blob | null>((resolve) => canvas.toBlob(resolve, 'image/jpeg', 0.82));
+    if (!jpeg || jpeg.size >= asset.blob.size) return asset;
+    return {
+      ...asset,
+      filename: `${asset.filename.replace(/\.[^.]+$/, '')}.jpg`,
+      mimeType: 'image/jpeg',
+      blob: jpeg,
+    };
+  } catch {
+    return asset;
+  } finally {
+    bitmap?.close();
+  }
+}
+
 export async function exportProjectPackage(project: Project, assets: readonly BinaryAsset[]): Promise<Blob> {
-  const matchingAssets = assets.filter((asset) => asset.projectId === project.id);
+  const usedImageIds = new Set(project.shotGroups.flatMap((group) =>
+    group.shots.flatMap((shot) => [shot.imageAssetId, shot.referenceAssetId].filter(Boolean) as string[])
+  ));
+  const matchingAssets = assets.filter((asset) =>
+    asset.projectId === project.id && (!asset.kind.endsWith('image') || usedImageIds.has(asset.id))
+  );
   const entries: Record<string, Uint8Array> = {};
   const manifestAssets: AssetManifestEntry[] = [];
-  for (const asset of matchingAssets) {
+  for (const sourceAsset of matchingAssets) {
+    const asset = await optimizeProjectImage(sourceAsset);
     const path = `assets/${encodeURIComponent(asset.id)}.${extensionFor(asset)}`;
     entries[path] = await blobToUint8Array(asset.blob);
     manifestAssets.push({
@@ -59,7 +96,7 @@ export async function exportProjectPackage(project: Project, assets: readonly Bi
   const manifest: PackageManifest = { format: 'waterclip', version: 1, projectPath: 'project.json', assets: manifestAssets };
   entries['manifest.json'] = strToU8(JSON.stringify(manifest));
   entries['project.json'] = strToU8(JSON.stringify(withoutSecrets(project)));
-  return new Blob([zipSync(entries, { level: 6 })], { type: WATERCLIP_MIME });
+  return new Blob([zipSync(entries, { level: 9 })], { type: WATERCLIP_MIME });
 }
 
 function parseJson<T>(files: Record<string, Uint8Array>, path: string): T {

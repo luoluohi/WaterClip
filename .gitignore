@@ -18,4 +18,5 @@ apps/server/tmp/
 playwright-report/
 test-results/
 release/
+release-assets/
 .release-staging/

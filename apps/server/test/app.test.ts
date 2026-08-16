@@ -104,10 +104,8 @@ describe('GET /api/health', () => {
     });
   });
 
-  it('仅为当前请求校验设置面板传来的 MuseScore 路径', async () => {
-    const detectMuseScore = vi.fn(async (preferredPath?: string) => preferredPath
-      ? { path: preferredPath, version: 'MuseScore 4.7.4' }
-      : null);
+  it('忽略浏览器传入的 MuseScore 路径并使用服务端探测', async () => {
+    const detectMuseScore = vi.fn(async () => ({ path: 'C:\\Bundled\\MuseScore4.exe', version: 'MuseScore 4.7.4' }));
     const app = await appFor({ detectMuseScore });
     const path = 'C:\\Portable\\MuseScore4.exe';
     const response = await app.inject({
@@ -116,8 +114,8 @@ describe('GET /api/health', () => {
     });
 
     expect(response.statusCode).toBe(200);
-    expect(detectMuseScore).toHaveBeenCalledWith(path);
-    expect(response.json().museScore).toMatchObject({ available: true, path });
+    expect(detectMuseScore).toHaveBeenCalledWith();
+    expect(response.json().museScore).toMatchObject({ available: true, path: 'C:\\Bundled\\MuseScore4.exe' });
   });
 });
 
@@ -148,11 +146,9 @@ describe('POST /api/scores/convert', () => {
     }));
   });
 
-  it('mscz 转换显式使用设置面板路径，不在服务端持久化', async () => {
+  it('mscz 转换忽略设置面板路径且不在服务端持久化', async () => {
     const path = 'C:\\Portable\\MuseScore4.exe';
-    const detectMuseScore = vi.fn(async (preferredPath?: string) => preferredPath
-      ? { path: preferredPath, version: 'MuseScore 4.7.4' }
-      : null);
+    const detectMuseScore = vi.fn(async () => ({ path: 'C:\\Bundled\\MuseScore4.exe', version: 'MuseScore 4.7.4' }));
     const convertMscz = vi.fn(async () => Buffer.from('<converted/>'));
     const app = await appFor({ detectMuseScore, convertMscz });
     const upload = multipart('demo.mscz', 'score');
@@ -163,11 +159,11 @@ describe('POST /api/scores/convert', () => {
     });
 
     expect(response.statusCode).toBe(200);
-    expect(detectMuseScore).toHaveBeenCalledWith(path);
-    expect(convertMscz).toHaveBeenCalledWith(expect.objectContaining({ museScorePath: path }));
+    expect(detectMuseScore).toHaveBeenCalledWith();
+    expect(convertMscz).toHaveBeenCalledWith(expect.objectContaining({ museScorePath: 'C:\\Bundled\\MuseScore4.exe' }));
   });
 
-  it('拒绝设置面板中无效的 MuseScore 路径', async () => {
+  it('缺少随包 MuseScore 时给出可操作错误，即使请求带有路径', async () => {
     const app = await appFor({ detectMuseScore: async () => null });
     const upload = multipart('demo.mscz', 'score');
     const response = await app.inject({
@@ -177,15 +173,7 @@ describe('POST /api/scores/convert', () => {
     });
 
     expect(response.statusCode).toBe(503);
-    expect(response.json().error).toContain('路径无效');
-  });
-
-  it('缺少 MuseScore 时给出可操作错误', async () => {
-    const app = await appFor({ detectMuseScore: async () => null });
-    const upload = multipart('demo.mscz', 'score');
-    const response = await app.inject({ method: 'POST', url: '/api/scores/convert', ...upload });
-    expect(response.statusCode).toBe(503);
-    expect(response.json().error).toContain('设置面板');
+    expect(response.json().error).toContain('随包 MuseScore CLI');
   });
 
   it('转换进程异常时返回可重试的502且不泄露内部错误', async () => {

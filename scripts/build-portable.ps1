@@ -2,8 +2,10 @@ param(
   [string]$OutputRoot = "",
   [string]$MuseScoreRoot = "C:\Program Files\MuseScore 4",
   [string]$NodeExe = "",
+  [string]$MuseScoreSourceArchive = "",
   [switch]$SkipArchive,
-  [switch]$SkipMuseScoreSourceArchive
+  [switch]$SkipMuseScoreSourceArchive,
+  [int]$HealthPort = 4175
 )
 
 $ErrorActionPreference = "Stop"
@@ -59,9 +61,10 @@ try {
   Copy-Item -LiteralPath "apps\server\dist" -Destination $serverDir -Recurse
   Copy-Item -Path "apps\web\dist\*" -Destination $webDir -Recurse
   Copy-Item -LiteralPath $NodeExe -Destination (Join-Path $runtimeDir "node.exe")
-  Copy-Item -LiteralPath "packaging\windows\WaterClip.vbs", "packaging\windows\WaterClip-console.cmd", "packaging\windows\Stop-WaterClip.cmd", "packaging\windows\Prepare-MuseScore.ps1", "packaging\windows\README.txt" -Destination $packageDir
+  Copy-Item -Path "packaging\windows\*.bat" -Destination $packageDir
+  Copy-Item -LiteralPath "packaging\windows\WaterClip-console.cmd", "packaging\windows\Stop-WaterClip.cmd", "packaging\windows\Prepare-MuseScore.ps1" -Destination $packageDir
+  Copy-Item -LiteralPath "README.md", "LICENSE", "SECURITY.md" -Destination $packageDir
   Copy-Item -LiteralPath "docs\OPEN_SOURCE_AUDIT.md" -Destination (Join-Path $packageDir "OPEN-SOURCE-AUDIT.md")
-  Copy-Item -LiteralPath "SECURITY.md" -Destination $packageDir
 
   $serverPackage = Get-Content -LiteralPath "apps\server\package.json" -Raw | ConvertFrom-Json
   $runtimePackage = [ordered]@{
@@ -93,16 +96,36 @@ try {
     throw "Unable to prepare the short MuseScore runtime path"
   }
 
-  Get-RemoteFile -Uri "https://raw.githubusercontent.com/musescore/MuseScore/$museTag/LICENSE.txt" -Destination (Join-Path $licenseDir "MuseScore-GPL-3.0.txt") -MinimumBytes 10kb
+  $museLicense = Join-Path $licenseDir "MuseScore-GPL-3.0.txt"
+  try { Get-RemoteFile -Uri "https://raw.githubusercontent.com/musescore/MuseScore/$museTag/LICENSE.txt" -Destination $museLicense -MinimumBytes 10kb }
+  catch {
+    $cachedLicense = Join-Path $repoRoot "..\WaterClip-0.1.0-win-x64-portable\licenses\MuseScore-GPL-3.0.txt"
+    if (-not (Test-Path -LiteralPath $cachedLicense)) { throw }
+    Copy-Item -LiteralPath $cachedLicense -Destination $museLicense -Force
+  }
   Copy-Item -LiteralPath (Join-Path $MuseScoreRoot "sound\MS Basic_License.md") -Destination (Join-Path $licenseDir "MuseScore-MS-Basic-SoundFont.md")
 
   $nodeVersion = (& $NodeExe --version).Trim().TrimStart("v")
-  Get-RemoteFile -Uri "https://raw.githubusercontent.com/nodejs/node/v$nodeVersion/LICENSE" -Destination (Join-Path $licenseDir "Node.js-LICENSE.txt") -MinimumBytes 10kb
+  $nodeLicense = Join-Path $licenseDir "Node.js-LICENSE.txt"
+  try { Get-RemoteFile -Uri "https://raw.githubusercontent.com/nodejs/node/v$nodeVersion/LICENSE" -Destination $nodeLicense -MinimumBytes 10kb }
+  catch {
+    $cachedNodeLicense = Join-Path $repoRoot "..\WaterClip-0.1.0-win-x64-portable\licenses\Node.js-LICENSE.txt"
+    if (-not (Test-Path -LiteralPath $cachedNodeLicense)) { throw }
+    Copy-Item -LiteralPath $cachedNodeLicense -Destination $nodeLicense -Force
+  }
   & $NodeExe "scripts\generate-third-party-notices.mjs" (Join-Path $licenseDir "NPM-THIRD-PARTY-NOTICES.md")
   if ($LASTEXITCODE -ne 0) { throw "npm third-party notice generation failed" }
   if (-not $SkipMuseScoreSourceArchive) {
     $sourceArchiveName = "MuseScore-$museVersion-source.zip"
-    Get-RemoteFile -Uri "https://codeload.github.com/musescore/MuseScore/zip/refs/tags/$museTag" -Destination (Join-Path $sourceDir $sourceArchiveName) -MinimumBytes 1mb
+    if (-not $MuseScoreSourceArchive) {
+      $candidate = Join-Path $repoRoot "..\WaterClip-0.1.0-win-x64-portable\corresponding-source\$sourceArchiveName"
+      if (Test-Path -LiteralPath $candidate) { $MuseScoreSourceArchive = $candidate }
+    }
+    if ($MuseScoreSourceArchive -and (Test-Path -LiteralPath $MuseScoreSourceArchive)) {
+      Copy-Item -LiteralPath $MuseScoreSourceArchive -Destination (Join-Path $sourceDir $sourceArchiveName)
+    } else {
+      Get-RemoteFile -Uri "https://codeload.github.com/musescore/MuseScore/zip/refs/tags/$museTag" -Destination (Join-Path $sourceDir $sourceArchiveName) -MinimumBytes 1mb
+    }
   }
 
   $sourceStatus = if ($SkipMuseScoreSourceArchive) {
@@ -150,6 +173,15 @@ try {
     museScoreSha256 = (Get-FileHash -Algorithm SHA256 -LiteralPath $bundledMuseScore).Hash.ToLowerInvariant()
   }
   $buildInfo | ConvertTo-Json -Depth 4 | Set-Content -LiteralPath (Join-Path $packageDir "BUILD-INFO.json") -Encoding utf8
+  @(
+    "WaterClip source repository",
+    "",
+    "Repository: https://github.com/luoluohi/WaterClip",
+    "Release tag: v0.1.0",
+    "Build commit: $gitCommit",
+    "",
+    "The complete editable WaterClip source, tests, lockfile, and build scripts are published in the repository above."
+  ) | Set-Content -LiteralPath (Join-Path $packageDir "SOURCE-REPOSITORY.txt") -Encoding utf8
 
   if (Get-ChildItem -LiteralPath $packageDir -File -Recurse | Where-Object { $_.Extension -in ".mscz", ".waterclip" }) {
     throw "Release unexpectedly contains a user project or score"
@@ -163,7 +195,7 @@ try {
   }
   try {
     $env:HOST = "127.0.0.1"
-    $env:PORT = "4174"
+    $env:PORT = [string]$HealthPort
     $env:MUSESCORE_PATH = $preparedMuseScore
     $env:WATERCLIP_STATIC_ROOT = $webDir
     $env:WATERCLIP_PID_FILE = Join-Path $stagingRoot "waterclip.pid"
@@ -174,7 +206,7 @@ try {
       Start-Sleep -Milliseconds 250
       if ($process.HasExited) { break }
       try {
-        $health = Invoke-RestMethod -Uri "http://127.0.0.1:4174/api/health" -TimeoutSec 2
+        $health = Invoke-RestMethod -Uri "http://127.0.0.1:$HealthPort/api/health" -TimeoutSec 2
         if ($health.ok -and $health.museScore.available) { $healthy = $true; break }
       } catch { }
     }
@@ -192,6 +224,17 @@ try {
     Compress-Archive -LiteralPath $packageDir -DestinationPath $archivePath -CompressionLevel Optimal
     $hash = (Get-FileHash -Algorithm SHA256 -LiteralPath $archivePath).Hash.ToLowerInvariant()
     "$hash  $([IO.Path]::GetFileName($archivePath))" | Set-Content -LiteralPath "$archivePath.sha256" -Encoding ascii
+
+    $releaseAssets = Join-Path $repoRoot "release-assets"
+    New-Item -ItemType Directory -Path $releaseAssets -Force | Out-Null
+    Copy-Item -LiteralPath $archivePath -Destination (Join-Path $releaseAssets ($packageName + ".zip")) -Force
+    $bundledSource = Get-ChildItem -LiteralPath $sourceDir -Filter "MuseScore-*-source.zip" -File | Select-Object -First 1
+    if ($bundledSource) { Copy-Item -LiteralPath $bundledSource.FullName -Destination (Join-Path $releaseAssets $bundledSource.Name) -Force }
+    $releaseLines = @(
+      "$((Get-FileHash -Algorithm SHA256 -LiteralPath (Join-Path $releaseAssets ($packageName + '.zip'))).Hash.ToLowerInvariant())  $($packageName).zip"
+    )
+    if ($bundledSource) { $releaseLines += "$((Get-FileHash -Algorithm SHA256 -LiteralPath (Join-Path $releaseAssets $bundledSource.Name)).Hash.ToLowerInvariant())  $($bundledSource.Name)" }
+    $releaseLines | Set-Content -LiteralPath (Join-Path $releaseAssets "SHA256SUMS.txt") -Encoding ascii
   }
 
   Write-Host "Portable release created: $packageDir"
