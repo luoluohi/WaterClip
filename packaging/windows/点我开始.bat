@@ -1,4 +1,5 @@
 @echo off
+chcp 65001 >nul
 setlocal EnableExtensions
 
 set "WATERCLIP_ROOT=%~dp0"
@@ -14,7 +15,7 @@ if not errorlevel 1 (
   exit /b 0
 )
 
-echo 正在准备 WaterClip，请稍候...
+echo Preparing WaterClip...
 powershell.exe -NoProfile -ExecutionPolicy Bypass -File "%WATERCLIP_ROOT%Prepare-MuseScore.ps1" -BundleRoot "%WATERCLIP_ROOT%"
 if errorlevel 1 goto :prepare_failed
 
@@ -39,17 +40,17 @@ for /l %%N in (1,1,30) do (
 )
 
 :server_failed
-echo WaterClip 启动失败。日志："%WATERCLIP_LOG%"
+echo WaterClip failed to start. Log: "%WATERCLIP_LOG%"
 start "" notepad.exe "%WATERCLIP_LOG%"
 pause
 exit /b 1
 
 :prepare_failed
-echo MuseScore 运行环境准备失败。
+echo MuseScore runtime preparation failed.
 pause
 exit /b 1
 
 :missing_files
-echo 便携包文件不完整，请重新完整解压 ZIP。
+echo Portable package is incomplete. Extract the full ZIP again.
 pause
 exit /b 1
