@@ -8,9 +8,7 @@ coverage/
 .env
 .env.*
 !.env.example
-.agent-work/PLAN.md
-.agent-work/*.log
-.agent-work/*.musicxml
+.agent-work/
 /example.mscz
 apps/web/vite.config.js
 apps/web/vite.config.d.ts

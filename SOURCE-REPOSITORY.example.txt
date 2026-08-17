@@ -1,7 +1,0 @@
-WaterClip source repository
-
-Repository: https://github.com/luoluohi/WaterClip
-Release tag: v0.1.0
-Build commit: replace-with-the-40-character-commit-used-for-the-release
-
-The public repository contains the complete editable source, tests, lockfile, and build scripts.

@@ -221,7 +221,14 @@ try {
 
   if (-not $SkipArchive) {
     if (Test-Path -LiteralPath $archivePath) { Remove-Item -LiteralPath $archivePath -Force }
-    Compress-Archive -LiteralPath $packageDir -DestinationPath $archivePath -CompressionLevel Optimal
+    Push-Location $outputRootPath
+    try {
+      # Archive the package directory from its parent so the ZIP has one
+      # intentional product root and never captures the staging folder name.
+      Compress-Archive -LiteralPath $packageName -DestinationPath $archivePath -CompressionLevel Optimal
+    } finally {
+      Pop-Location
+    }
     $hash = (Get-FileHash -Algorithm SHA256 -LiteralPath $archivePath).Hash.ToLowerInvariant()
     "$hash  $([IO.Path]::GetFileName($archivePath))" | Set-Content -LiteralPath "$archivePath.sha256" -Encoding ascii
 

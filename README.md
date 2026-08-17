@@ -2,9 +2,11 @@
 
 WaterClip 是面向合奏、管弦乐和多机位音乐录制的本地分镜编排工具。它可以导入 MSCZ、MusicXML、XML 或 MXL 乐谱，在谱面上框选声部与小节，制作分镜、参考图和拍摄描述，并导出项目包、XLSX 分镜表及带分镜标记的制片总谱 PDF。
 
-当前版本：**0.1.0（Windows x64 便携版）**
+当前版本：**0.1.0**。本仓库包含完整开发源码；Windows x64 便携包作为 GitHub Release 资产发布。
 
-## 第一次启动
+## 使用 Windows 便携版
+
+从 GitHub Release 下载 `WaterClip-0.1.0-win-x64-portable.zip` 后：
 
 1. 完整解压整个文件夹。不要只单独复制启动文件，也不要删除 `app`、`runtime`、`third_party` 或 `licenses`。
 2. 双击 **`点我开始.bat`**。
@@ -105,13 +107,13 @@ npm run dev
 
 ## MuseScore CLI
 
-MSCZ 转换和制片总谱 PDF 排版仍需要 MuseScore Studio 4。此便携版已经包含 **MuseScore Studio 4.7.4（Build 7688c00）**，WaterClip 通过命令行和临时文件边界调用它；用户不需要另行安装，也不需要在设置中填写路径。
+MSCZ 转换和制片总谱 PDF 排版仍需要 MuseScore Studio 4。GitHub Release 的 Windows 便携包已经包含 **MuseScore Studio 4.7.4（Build 7688c00）**，WaterClip 通过命令行和临时文件边界调用它；便携版用户不需要另行安装，也不需要在设置中填写路径。
 
-MuseScore 是独立的 GPLv3 程序。其许可证位于 `licenses/MuseScore-GPL-3.0.txt`，对应版本和源码地址位于 `corresponding-source/MUSESCORE-SOURCE.txt`。公开发布包含 MuseScore 二进制的下载时，分发者必须确保相同版本的完整对应源码以合规方式持续可得。
+MuseScore 是独立的 GPLv3 程序。发行包内的许可证位于 `licenses/MuseScore-GPL-3.0.txt`，对应版本和源码地址位于 `corresponding-source/MUSESCORE-SOURCE.txt`。公开发布包含 MuseScore 二进制的下载时，分发者必须确保相同版本的完整对应源码以合规方式持续可得。
 
 ## 第三方开源组件
 
-发行包还使用 Node.js、React、alphaTab、ExcelJS、Fastify、pdf-lib、fflate、Lucide、Bravura、Sonivox 和 MS Basic SoundFont 等开源组件。完整包名、版本、SPDX 标识及许可证文本见：
+发行包还使用 Node.js、React、alphaTab、ExcelJS、Fastify、pdf-lib、fflate、Lucide、Bravura、Sonivox 和 MS Basic SoundFont 等开源组件。构建时生成的完整包名、版本、SPDX 标识及许可证文本见发行包中的：
 
 - `licenses/NPM-THIRD-PARTY-NOTICES.md`
 - `licenses/THIRD-PARTY-NOTICES.md`
@@ -123,20 +125,45 @@ MuseScore 是独立的 GPLv3 程序。其许可证位于 `licenses/MuseScore-GPL
 
 WaterClip 自身以 **GNU General Public License v3.0 only（GPL-3.0-only）** 发布，完整条款见仓库根目录 `LICENSE`。第三方组件仍分别适用其各自许可证。
 
-## 发布到 GitHub 前
+## 源码仓库
 
-当前目录是便携发行物，不是完整的开发源码工作树。公开仓库应同时提供可复现构建所需的 WaterClip 源码、依赖锁文件、构建脚本和审计命令，而不是只上传压缩后的 `app/web/assets`。
+本 GitHub 仓库是完整的 WaterClip 开发源码，包含 TypeScript/React 源码、依赖锁文件、测试和构建脚本。便携包内的 `app/web/assets` 是构建结果，不能替代源码仓库。
 
-发布者还必须完成以下事项：
+## 构建 Windows 便携包
 
-1. **确认完整 WaterClip 源码仓库使用 GPL-3.0-only**，并在仓库根目录提交本发行物中的正式 `LICENSE`。
-2. 在同一 Release 下载位置上传 `MuseScore-4.7.4-source.zip`；该归档已通过结构校验，SHA-256 记录在 `corresponding-source/MUSESCORE-SOURCE.txt`。
-3. 设置仓库 URL、Issue 模板、安全漏洞私密联系渠道和贡献说明。
-4. 运行依赖审计、测试、类型检查、构建和干净 Windows 环境验收；详见 `OPEN-SOURCE-AUDIT.md`。
-5. 为发布归档生成 SHA-256 校验值。正式发布可进一步考虑 Authenticode 签名，减少 Windows SmartScreen 警告。
+环境要求：Windows x64、Node.js 22 或更高版本、npm，以及 MuseScore Studio 4.7.4。MuseScore 可安装在默认目录，也可以通过 `-MuseScoreRoot` 指定目录。
 
-发布前可运行 `powershell -NoProfile -ExecutionPolicy Bypass -File .\Test-ReleaseReadiness.ps1 -RunNpmAudit`。该脚本只读取和校验文件，不会删除数据；根许可证、指向完整 WaterClip 源码仓库与构建提交的 `SOURCE-REPOSITORY.txt`、MuseScore 源码归档、用户测试文件、关键构建字符串或依赖审计任一不满足时都会返回失败。
+在仓库根目录执行：
 
-完整源码仓库公开后，运行 `powershell -NoProfile -ExecutionPolicy Bypass -File .\Build-Release.ps1 -RepositoryUrl https://github.com/OWNER/REPOSITORY`。脚本会生成与 `BUILD-INFO.json` 一致的 `SOURCE-REPOSITORY.txt`，强制执行发布检查和依赖审计，再在 `release-assets` 中生成可通过 `点我开始.bat` 启动的 Windows 便携 ZIP、独立的 MuseScore 4.7.4 源码 ZIP 和 `SHA256SUMS.txt`；本地调试乐谱、项目、日志、PID 和测试导出不会进入程序包。
+```powershell
+npm ci
+npm test
+npm run typecheck
+npm run build
+npm run audit:open-source
+npm audit --omit=dev --registry=https://registry.npmjs.org
+```
 
-本说明不是法律意见；公开分发前应由项目所有者确认许可证与对应源码义务。
+构建便携包：
+
+```powershell
+npm run release:portable -- `
+  -MuseScoreRoot "C:\Program Files\MuseScore 4" `
+  -MuseScoreSourceArchive "C:\path\to\MuseScore-4.7.4-source.zip"
+```
+
+如果 MuseScore 对应源码 ZIP 已放在上一版便携目录，脚本会优先使用本地缓存；也可以省略 `-MuseScoreSourceArchive` 让脚本从 MuseScore 官方地址获取。构建完成后，正式上传资产位于 `release-assets`：
+
+- `WaterClip-0.1.0-win-x64-portable.zip`
+- `MuseScore-4.7.4-source.zip`
+- `SHA256SUMS.txt`
+
+验证便携包：
+
+```powershell
+npm run release:verify -- `
+  -PackageRoot ".\release\WaterClip-0.1.0-win-x64-portable" `
+  -ScorePath ".\example.mscz"
+```
+
+`release/`、`release-assets/`、日志、PID、验收乐谱和用户项目均已加入忽略规则，不应提交到源码仓库。便携包解压后使用 `点我开始.bat` 启动。
