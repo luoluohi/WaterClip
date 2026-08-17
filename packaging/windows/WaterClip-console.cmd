@@ -1,7 +1,7 @@
 @echo off
 setlocal
 set "WATERCLIP_ROOT=%~dp0"
-powershell.exe -NoProfile -ExecutionPolicy Bypass -File "%WATERCLIP_ROOT%Prepare-MuseScore.ps1" -BundleRoot "%WATERCLIP_ROOT%"
+powershell.exe -NoProfile -ExecutionPolicy Bypass -File "%WATERCLIP_ROOT%Prepare-MuseScore.ps1" -BundleRoot "%WATERCLIP_ROOT%."
 if errorlevel 1 goto :prepare_failed
 set "HOST=127.0.0.1"
 set "PORT=4174"

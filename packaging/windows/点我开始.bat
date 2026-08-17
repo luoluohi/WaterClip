@@ -16,7 +16,7 @@ if not errorlevel 1 (
 )
 
 echo Preparing WaterClip...
-powershell.exe -NoProfile -ExecutionPolicy Bypass -File "%WATERCLIP_ROOT%Prepare-MuseScore.ps1" -BundleRoot "%WATERCLIP_ROOT%"
+powershell.exe -NoProfile -ExecutionPolicy Bypass -File "%WATERCLIP_ROOT%Prepare-MuseScore.ps1" -BundleRoot "%WATERCLIP_ROOT%."
 if errorlevel 1 goto :prepare_failed
 
 set "HOST=127.0.0.1"
