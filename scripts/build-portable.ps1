@@ -63,7 +63,7 @@ try {
   Copy-Item -LiteralPath $NodeExe -Destination (Join-Path $runtimeDir "node.exe")
   Copy-Item -Path "packaging\windows\*.bat" -Destination $packageDir
   Copy-Item -LiteralPath "packaging\windows\WaterClip-console.cmd", "packaging\windows\Stop-WaterClip.cmd", "packaging\windows\Prepare-MuseScore.ps1" -Destination $packageDir
-  Copy-Item -LiteralPath "README.md", "LICENSE", "SECURITY.md" -Destination $packageDir
+  Copy-Item -LiteralPath "README.md", "LICENSE" -Destination $packageDir
   Copy-Item -LiteralPath "docs\OPEN_SOURCE_AUDIT.md" -Destination (Join-Path $packageDir "OPEN-SOURCE-AUDIT.md")
 
   $serverPackage = Get-Content -LiteralPath "apps\server\package.json" -Raw | ConvertFrom-Json
