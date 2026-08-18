@@ -66,6 +66,15 @@ describe('workspace store', () => {
     expect(useWorkspace.getState().parts).toEqual(replacement);
   });
 
+  it('preserves a custom project name when the loaded score is parsed again', () => {
+    useWorkspace.getState().setScore('example.mscz', 'mscz', parts);
+    useWorkspace.getState().renameProject('我的正式项目');
+
+    useWorkspace.getState().setScore('example.mscz', 'mscz', parts);
+
+    expect(useWorkspace.getState().project.name).toBe('我的正式项目');
+  });
+
   it('故事板按起始小节排序，起点相同的分镜保持原有次序', () => {
     useWorkspace.getState().setSelection({ partIds: ['violin'], startMeasure: 10, endMeasure: 11 });
     const lateFirst = useWorkspace.getState().addGroup()!;

@@ -241,13 +241,18 @@ export const useWorkspace = create<WorkspaceState>((set, get) => ({
   })),
   setScore: (name, sourceFormat, parts) => set((state) => {
     const replacingScore = Boolean(state.project.score && state.project.score.name !== name);
+    // Parsing callbacks run again when a saved project is opened. Preserve a
+    // custom project name when the callback refers to the already-loaded score.
+    const projectName = state.project.score?.name === name
+      ? state.project.name
+      : name.replace(/\.(mscz|musicxml|xml|mxl)$/i, '') || '未命名合奏';
     return {
       parts,
       selection: replacingScore ? undefined : state.selection,
       selectedGroupId: replacingScore ? undefined : state.selectedGroupId,
       project: {
         ...state.project,
-        name: name.replace(/\.(mscz|musicxml|xml|mxl)$/i, '') || '未命名合奏',
+        name: projectName,
         updatedAt: new Date().toISOString(),
         shotGroups: replacingScore ? [] : state.project.shotGroups,
         score: {
